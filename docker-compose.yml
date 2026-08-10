@@ -1,0 +1,54 @@
+name: moodify
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: moodify-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: moodify
+      POSTGRES_USER: moodify
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing — run scripts/install.sh}
+    volumes:
+      - moodify-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U moodify -d moodify']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  app:
+    build: .
+    image: moodify-app
+    container_name: moodify-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://moodify:${POSTGRES_PASSWORD}@postgres:5432/moodify
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET missing — run scripts/install.sh}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY missing — run scripts/install.sh}
+      ASSETS_DIR: /data/assets
+      PORT: '8080'
+    # Only one port is exposed; TLS is terminated by an external reverse proxy (§2).
+    ports:
+      - '${MOODIFY_PORT:-8080}:8080'
+    volumes:
+      - moodify-assets:/data/assets
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  moodify-db:
+  moodify-assets:

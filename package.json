@@ -1,0 +1,19 @@
+{
+  "name": "moodify",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @moodify/backend & npm run dev -w @moodify/frontend",
+    "build": "npm run build -w @moodify/frontend",
+    "check": "tsc --noEmit -p apps/backend && tsc --noEmit -p apps/frontend",
+    "test": "node --test apps/backend/src/*.test.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
