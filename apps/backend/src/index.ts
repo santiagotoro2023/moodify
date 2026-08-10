@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
-import Fastify from 'fastify';
+import Fastify, { type FastifyError } from 'fastify';
 import { ZodError } from 'zod';
 import { ASSETS_DIR, SPA_DIR } from './config.ts';
 import { assertEncryptionKey } from './crypto.ts';
@@ -17,7 +17,7 @@ const app = Fastify({
 });
 
 // Zod failures are user input problems, not 500s.
-app.setErrorHandler((error, _request, reply) => {
+app.setErrorHandler((error: FastifyError, _request, reply) => {
   if (error instanceof ZodError) {
     return reply.code(400).send({
       error: 'Invalid input',
