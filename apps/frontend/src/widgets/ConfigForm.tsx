@@ -110,6 +110,53 @@ export function WidgetConfigForm({
     </div>
   );
 
+  const excluded = Array.isArray(config.excludeUserIds) ? (config.excludeUserIds as number[]) : [];
+  const toggleExcluded = (uid: number) =>
+    set(
+      'excludeUserIds',
+      excluded.includes(uid) ? excluded.filter((x) => x !== uid) : [...excluded, uid],
+    );
+
+  /** Opt-out list: everyone is shown unless explicitly ticked here. */
+  const excludePicker = () => (
+    <div>
+      <Label>Exclude students</Label>
+      <p className="mb-2 text-xs text-muted">
+        Ticked students are hidden from this widget and left out of its averages and
+        rankings — useful for test accounts.
+      </p>
+      {users.length === 0 ? (
+        <p className="text-xs text-muted">No students synced yet.</p>
+      ) : (
+        <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl border border-edge p-2">
+          {users.map((user) => (
+            <label
+              key={user.id}
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-surface"
+            >
+              <input
+                type="checkbox"
+                className="accent-accent"
+                checked={excluded.includes(user.id)}
+                onChange={() => toggleExcluded(user.id)}
+              />
+              <span className="truncate">{user.fullname}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {excluded.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => set('excludeUserIds', [])}
+          className="mt-1 text-xs text-accent underline underline-offset-2"
+        >
+          Clear {excluded.length} exclusion{excluded.length === 1 ? '' : 's'}
+        </button>
+      ) : null}
+    </div>
+  );
+
   const staffToggle = () => (
     <div className="flex items-center justify-between gap-4">
       <Label htmlFor={id('staff')} className="mb-0">
@@ -158,6 +205,7 @@ export function WidgetConfigForm({
             </div>
           </div>
           {staffToggle()}
+          {excludePicker()}
         </>
       ) : null}
 
@@ -176,6 +224,7 @@ export function WidgetConfigForm({
           </div>
           {config.scope === 'user' ? userPicker() : coursePicker()}
           {config.scope !== 'user' ? staffToggle() : null}
+          {config.scope !== 'user' ? excludePicker() : null}
         </>
       ) : null}
 
@@ -183,6 +232,7 @@ export function WidgetConfigForm({
         <>
           {coursePicker()}
           {staffToggle()}
+          {excludePicker()}
         </>
       ) : null}
 
@@ -202,6 +252,7 @@ export function WidgetConfigForm({
             />
           </div>
           {staffToggle()}
+          {excludePicker()}
         </>
       ) : null}
 

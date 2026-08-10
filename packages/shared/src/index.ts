@@ -25,54 +25,50 @@ const courseScope = {
   scope: z.enum(['all', 'course']).default('all'),
   courseId: courseId.nullable().default(null),
 };
-const courseScopeIsCoherent = (v: { scope: string; courseId: number | null }) =>
-  v.scope !== 'course' || v.courseId !== null;
-const courseScopeError = {
-  message: 'courseId is required when scope is "course"',
-  path: ['courseId'],
-};
+/**
+ * A freshly dropped widget has nothing selected yet, so course/user references are
+ * always nullable and no schema demands one. The data resolver reports what is still
+ * missing ("No course selected for this widget.") — a widget you cannot add until it
+ * is already configured is a widget you cannot add.
+ */
 
-export const completionTableConfig = z
-  .object({
-    ...courseScope,
-    sortBy: z.enum(['name', 'course', 'percent']).default('name'),
-    sortDir: z.enum(['asc', 'desc']).default('asc'),
-    includeStaff: z.boolean().default(false),
-  })
-  .refine(courseScopeIsCoherent, courseScopeError);
+/** Students to leave out of a widget, e.g. a test account holding every badge. */
+const excludeUserIds = z.array(userId).max(500).default([]);
 
-export const badgeCardsConfig = z
-  .object({
-    /** 'user' renders one card per badge for a single user; 'course' renders a card per enrolled student. */
-    scope: z.enum(['user', 'course']).default('course'),
-    userId: userId.nullable().default(null),
-    courseId: courseId.nullable().default(null),
-    includeStaff: z.boolean().default(false),
-  })
-  .refine((v) => (v.scope === 'user' ? v.userId !== null : v.courseId !== null), {
-    message: 'Pick a user when scope is "user", or a course when scope is "course"',
-    path: ['scope'],
-  });
-
-export const courseOverviewConfig = z.object({
-  courseId,
+export const completionTableConfig = z.object({
+  ...courseScope,
+  sortBy: z.enum(['name', 'course', 'percent']).default('name'),
+  sortDir: z.enum(['asc', 'desc']).default('asc'),
   includeStaff: z.boolean().default(false),
+  excludeUserIds,
 });
 
-export const leaderboardConfig = z
-  .object({
-    ...courseScope,
-    limit: z.number().int().min(1).max(100).default(10),
-    includeStaff: z.boolean().default(false),
-  })
-  .refine(courseScopeIsCoherent, courseScopeError);
+export const badgeCardsConfig = z.object({
+  /** 'user' renders a single card; 'course' renders one card per enrolled student. */
+  scope: z.enum(['user', 'course']).default('course'),
+  userId: userId.nullable().default(null),
+  courseId: courseId.nullable().default(null),
+  includeStaff: z.boolean().default(false),
+  excludeUserIds,
+});
 
-export const userListConfig = z
-  .object({
-    userId,
-    ...courseScope,
-  })
-  .refine(courseScopeIsCoherent, courseScopeError);
+export const courseOverviewConfig = z.object({
+  courseId: courseId.nullable().default(null),
+  includeStaff: z.boolean().default(false),
+  excludeUserIds,
+});
+
+export const leaderboardConfig = z.object({
+  ...courseScope,
+  limit: z.number().int().min(1).max(100).default(10),
+  includeStaff: z.boolean().default(false),
+  excludeUserIds,
+});
+
+export const userListConfig = z.object({
+  userId: userId.nullable().default(null),
+  ...courseScope,
+});
 
 export const WIDGET_CONFIG_SCHEMAS = {
   completion_table: completionTableConfig,
@@ -199,7 +195,16 @@ export interface BootstrapState {
   hasAdmin: boolean;
   connection: ConnectionState | null;
   logoUrl: string;
+  /** Rendered height of the header logo in pixels. */
+  logoHeight: number;
+  /**
+   * External origin Moodify is reached on, e.g. https://moodify.example.ch.
+   * Public share links are built from this; empty means "use the browser's origin".
+   */
+  publicBaseUrl: string;
 }
+
+export const DEFAULT_LOGO_HEIGHT = 32;
 
 // ---------------------------------------------------------------------------
 // Widget data payloads — what GET /api/widgets/:id/data returns per type.
@@ -222,7 +227,13 @@ export interface CompletionTableData {
 
 export interface BadgeCardsData {
   type: 'badge_cards';
-  users: { user: MoodleUser; badges: Badge[] }[];
+  /**
+   * Ordered by badge count descending, so index 0/1/2 are the gold/silver/bronze
+   * places the UI decorates. `percent` is completion for the scoped course, or the
+   * mean across the user's enrolled courses when the widget covers all courses;
+   * null keeps its "not tracked" meaning.
+   */
+  users: { user: MoodleUser; badges: Badge[]; percent: number | null }[];
 }
 
 export interface CourseOverviewData {

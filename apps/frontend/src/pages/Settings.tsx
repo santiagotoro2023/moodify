@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { REQUIRED_WS_FUNCTIONS, type ConnectionState, type SyncProgress } from '@moodify/shared';
+import {
+  DEFAULT_LOGO_HEIGHT,
+  REQUIRED_WS_FUNCTIONS,
+  type BootstrapState,
+  type ConnectionState,
+  type SyncProgress,
+} from '@moodify/shared';
 import { CheckCircle2, RefreshCw } from 'lucide-react';
 import { api, cn, errorMessage, relativeTime } from '@/lib/api';
 import { Button, Card, ErrorNote, Input, Label, Select, Spinner } from '@/ui';
@@ -14,16 +20,20 @@ const STATUS_STYLES: Record<string, string> = {
 export default function Settings() {
   const [connection, setConnection] = useState<ConnectionState | null>(null);
   const [logoUrl, setLogoUrl] = useState('/brand/moodify-logo.svg');
+  const [logoHeight, setLogoHeight] = useState(DEFAULT_LOGO_HEIGHT);
+  const [publicBaseUrl, setPublicBaseUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const [conn, boot] = await Promise.all([
         api.get<ConnectionState>('/api/connection'),
-        api.get<{ logoUrl: string }>('/api/bootstrap'),
+        api.get<BootstrapState>('/api/bootstrap'),
       ]);
       setConnection(conn);
       setLogoUrl(boot.logoUrl);
+      setLogoHeight(boot.logoHeight);
+      setPublicBaseUrl(boot.publicBaseUrl);
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
@@ -49,7 +59,8 @@ export default function Settings() {
 
       <ConnectionCard connection={connection} onChanged={load} />
       <SyncCard connection={connection} onChanged={load} />
-      <BrandingCard logoUrl={logoUrl} onChanged={load} />
+      <AccessCard publicBaseUrl={publicBaseUrl} onChanged={load} />
+      <BrandingCard logoUrl={logoUrl} logoHeight={logoHeight} onChanged={load} />
     </div>
   );
 }
@@ -336,15 +347,83 @@ function SyncCard({
   );
 }
 
-function BrandingCard({ logoUrl, onChanged }: { logoUrl: string; onChanged: () => Promise<void> }) {
+/** Where Moodify is reached from outside — public share links are built from this. */
+function AccessCard({
+  publicBaseUrl,
+  onChanged,
+}: {
+  publicBaseUrl: string;
+  onChanged: () => Promise<void>;
+}) {
+  const [value, setValue] = useState(publicBaseUrl);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => setValue(publicBaseUrl), [publicBaseUrl]);
+
+  return (
+    <Card className="space-y-4">
+      <h2 className="font-medium">Public address</h2>
+      <div>
+        <Label htmlFor="public-url">External URL</Label>
+        <div className="flex gap-2">
+          <Input
+            id="public-url"
+            value={value}
+            placeholder="https://moodify.example.ch"
+            onChange={(e) => {
+              setValue(e.target.value);
+              setSaved(false);
+            }}
+          />
+          <Button
+            variant="subtle"
+            onClick={async () => {
+              try {
+                await api.patch('/api/settings', { publicBaseUrl: value.trim() });
+                await onChanged();
+                setError(null);
+                setSaved(true);
+              } catch (err) {
+                setError(errorMessage(err));
+              }
+            }}
+          >
+            Save
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          The address your reverse proxy serves Moodify on. Share links are built from it, so
+          without it they point at the internal host and port. Leave blank to use whatever
+          address the browser is currently on.
+        </p>
+        {saved ? <p className="mt-1 text-xs text-good">Saved.</p> : null}
+        {error ? <ErrorNote message={error} className="mt-2" /> : null}
+      </div>
+    </Card>
+  );
+}
+
+function BrandingCard({
+  logoUrl,
+  logoHeight,
+  onChanged,
+}: {
+  logoUrl: string;
+  logoHeight: number;
+  onChanged: () => Promise<void>;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [height, setHeight] = useState(logoHeight);
+
+  useEffect(() => setHeight(logoHeight), [logoHeight]);
 
   return (
     <Card className="space-y-4">
       <h2 className="font-medium">Branding</h2>
 
       <div className="flex items-center gap-4">
-        <img src={logoUrl} alt="Current logo" className="h-10 w-auto" />
+        <img src={logoUrl} alt="Current logo" style={{ height: `${height}px` }} className="w-auto" />
         <div className="flex-1">
           <input
             type="file"
@@ -376,9 +455,47 @@ function BrandingCard({ logoUrl, onChanged }: { logoUrl: string; onChanged: () =
         </Button>
       </div>
 
+      <div>
+        <Label htmlFor="logo-height">Logo height ({height}px)</Label>
+        <div className="flex items-center gap-3">
+          <input
+            id="logo-height"
+            type="range"
+            min={16}
+            max={160}
+            step={2}
+            value={height}
+            className="w-full accent-accent"
+            onChange={(e) => setHeight(Number(e.target.value))}
+            onMouseUp={async () => {
+              await api.patch('/api/settings', { logoHeight: height }).catch(() => undefined);
+              await onChanged();
+            }}
+            onTouchEnd={async () => {
+              await api.patch('/api/settings', { logoHeight: height }).catch(() => undefined);
+              await onChanged();
+            }}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              setHeight(DEFAULT_LOGO_HEIGHT);
+              await api.patch('/api/settings', { logoHeight: DEFAULT_LOGO_HEIGHT });
+              await onChanged();
+            }}
+          >
+            Default
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          Applies to the header logo. The preview above updates as you drag.
+        </p>
+      </div>
+
       <p className="text-xs text-muted">
         The bundled Moodify logo is never overwritten — a custom logo simply takes precedence, and
-        resetting brings the original back.
+        resetting brings the original back. A custom logo is also used as the browser tab icon.
       </p>
 
       {error ? <ErrorNote message={error} /> : null}

@@ -101,6 +101,18 @@ only the badges a given user has *earned*. So for Moodify's purposes, the badges
 union of badges actually awarded to its enrolled users. A configured-but-never-awarded badge is
 invisible to Moodify. This is a Moodle API limitation, not a bug.
 
+**Excluding students.** Each widget carries an opt-out list: everyone appears unless you tick
+them out. Exclusions apply to rows, class averages and leaderboard rankings alike, so a test
+account holding every badge can be removed without deleting anything in Moodle.
+
+**Public address.** Share links are built from the external URL set in Settings → Public address.
+Without it Moodify only knows the host and port it is bound to, which is wrong the moment it sits
+behind a reverse proxy. Blank falls back to whatever address the browser is on.
+
+**Unconfigured widgets.** A widget is created with nothing selected and reports what it still
+needs. Requiring a course before a widget could be added made three of the five impossible to add
+at all.
+
 **Sync split.** A light pass refreshes completion and badges for already-known user/course pairs on
 the configured poll interval (default 60s, minimum 15s). A full re-discovery — new courses, new
 enrolments, new users — runs every 15 minutes, and on demand via **Re-sync now** in Settings.

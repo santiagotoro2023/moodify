@@ -101,13 +101,14 @@ test('one user keeps one label across every array in a single call', () => {
   const data: BadgeCardsData = {
     type: 'badge_cards',
     users: [
-      { user: user(9, 'Nia'), badges: [] },
+      { user: user(9, 'Nia'), badges: [], percent: null },
       {
         user: user(4, 'Ben'),
         badges: [{ id: 1, name: 'Starter', description: null, courseId: null, imageUrl: null }],
+        percent: null,
       },
       // Same person again — e.g. holding both a course and a site-wide badge.
-      { user: user(9, 'Nia'), badges: [] },
+      { user: user(9, 'Nia'), badges: [], percent: null },
     ],
   };
 

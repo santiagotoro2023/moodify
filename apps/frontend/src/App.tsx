@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import type { BootstrapState } from '@moodify/shared';
+import { DEFAULT_LOGO_HEIGHT, type BootstrapState } from '@moodify/shared';
 import { AlertTriangle, LayoutDashboard, LogOut, PlugZap, RefreshCw, Settings as Cog } from 'lucide-react';
 import { api, cn, errorMessage, relativeTime } from '@/lib/api';
 import { Button, Card, ErrorNote, Spinner } from '@/ui';
@@ -37,6 +37,18 @@ export function useBootstrap(pollMs?: number) {
     const timer = setInterval(() => void reload(), pollMs);
     return () => clearInterval(timer);
   }, [pollMs, reload]);
+
+  // A custom logo doubles as the favicon, so the browser tab matches the header.
+  useEffect(() => {
+    if (!state?.logoUrl) return;
+    let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = state.logoUrl;
+  }, [state?.logoUrl]);
 
   return { state, loading, error, reload };
 }
@@ -94,7 +106,8 @@ function AppLayout({ children }: { children: ReactNode }) {
           <img
             src={state?.logoUrl || DEFAULT_LOGO}
             alt="Moodify"
-            className="h-8 w-auto"
+            className="w-auto shrink-0"
+            style={{ height: `${state?.logoHeight ?? DEFAULT_LOGO_HEIGHT}px` }}
             onError={(event) => {
               event.currentTarget.src = DEFAULT_LOGO;
             }}

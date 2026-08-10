@@ -138,18 +138,69 @@ function CompletionTable({ data }: { data: CompletionTableData }) {
   );
 }
 
+/** Gold / silver / bronze for the top three badge counts. */
+const PLACE_STYLES = [
+  { ring: 'ring-amber-400/50', text: 'text-amber-300', label: '1st' },
+  { ring: 'ring-slate-300/40', text: 'text-slate-300', label: '2nd' },
+  { ring: 'ring-amber-700/50', text: 'text-amber-600', label: '3rd' },
+];
+
 function BadgeCards({ data }: { data: BadgeCardsData }) {
   if (data.users.length === 0) {
     return <EmptyState icon={<Award className="h-6 w-6" />} title="Nobody enrolled yet" />;
   }
+
+  // Rows are pre-sorted by badge count, but only award a trophy to someone who
+  // actually holds badges — otherwise an empty course hands out three trophies.
   return (
-    <div className="grid gap-3 overflow-auto sm:grid-cols-2">
-      {data.users.map((entry) => (
-        <div key={entry.user.id} className="rounded-xl border border-edge bg-white/3 p-3">
-          <p className="mb-2 truncate text-sm font-medium">{entry.user.fullname}</p>
-          <BadgeList badges={entry.badges} />
-        </div>
-      ))}
+    <div className="space-y-2 overflow-auto">
+      {data.users.map((entry, index) => {
+        const place = entry.badges.length > 0 ? PLACE_STYLES[index] : undefined;
+        return (
+          <div
+            key={entry.user.id}
+            className={cn(
+              'rounded-xl border border-edge bg-white/3 p-3',
+              place && `ring-1 ${place.ring}`,
+            )}
+          >
+            <div className="mb-2 flex items-center gap-2">
+              {place ? (
+                <span className={cn('flex shrink-0 items-center gap-1 text-xs', place.text)}>
+                  <Trophy className="h-4 w-4" />
+                  {place.label}
+                </span>
+              ) : null}
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {entry.user.fullname}
+              </span>
+              <span className="shrink-0 text-xs tabular-nums text-muted">
+                {entry.badges.length} {entry.badges.length === 1 ? 'badge' : 'badges'}
+              </span>
+            </div>
+
+            {entry.percent === null ? (
+              <p className="mb-2 text-xs text-muted" title="No completion-tracked activities">
+                Completion not tracked
+              </p>
+            ) : (
+              <div className="mb-2 flex items-center gap-2">
+                <span className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <span
+                    className={cn('block h-full rounded-full', bandClass(entry.percent))}
+                    style={{ width: `${entry.percent}%` }}
+                  />
+                </span>
+                <span className="shrink-0 text-xs tabular-nums text-muted">
+                  {Math.round(entry.percent)}%
+                </span>
+              </div>
+            )}
+
+            <BadgeList badges={entry.badges} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -283,8 +334,9 @@ export const WIDGET_META: Record<
     icon: Table2,
   },
   badge_cards: {
-    label: 'Badge cards',
-    description: 'A card per student showing the badges they have earned.',
+    label: 'Badges & progress',
+    description:
+      'A row per student: completion, every badge icon they hold, and gold/silver/bronze for the top three.',
     icon: Award,
   },
   course_overview: {

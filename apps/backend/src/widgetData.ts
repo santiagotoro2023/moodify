@@ -110,6 +110,15 @@ function studentFilter(param: string): string {
   return `(${param}::boolean or 'student' = any(e.roles))`;
 }
 
+/**
+ * Excluded-user predicate, appended wherever studentFilter is used so a widget's
+ * exclusion list applies to rows, averages and rankings alike. `param` is bound to
+ * config.excludeUserIds; an empty array excludes nobody.
+ */
+function excludeFilter(param: string): string {
+  return `e.moodle_user_id <> all(${param}::int[])`;
+}
+
 function fail(message: string): WidgetDataError {
   return { type: 'error', message };
 }
@@ -251,8 +260,9 @@ async function completionTable(
        join moodle_users u on u.moodle_user_id = e.moodle_user_id
       where e.moodle_course_id = any($1::int[])
         and ${studentFilter('$2')}
+        and ${excludeFilter('$3')}
       order by u.fullname asc, u.moodle_user_id asc`,
-    [courseIds, config.includeStaff],
+    [courseIds, config.includeStaff, config.excludeUserIds],
   );
   const users = userRows.map(toUser);
   if (users.length === 0) return { type: 'completion_table', courses, rows: [] };
@@ -308,7 +318,16 @@ async function badgeCards(
         order by b.name asc, b.moodle_badge_id asc`,
       [user.id],
     );
-    return { type: 'badge_cards', users: [{ user, badges: rows.map(toBadge) }] };
+    const { rows: pct } = await sql<{ percent: number | null }>(
+      `select avg(percent_complete) as percent
+         from completion_snapshot
+        where moodle_user_id = $1 and percent_complete is not null`,
+      [user.id],
+    );
+    return {
+      type: 'badge_cards',
+      users: [{ user, badges: rows.map(toBadge), percent: pct[0]?.percent ?? null }],
+    };
   }
 
   if (config.courseId === null) return fail('No course selected for this widget.');
@@ -321,11 +340,20 @@ async function badgeCards(
        join moodle_users u on u.moodle_user_id = e.moodle_user_id
       where e.moodle_course_id = $1
         and ${studentFilter('$2')}
+        and ${excludeFilter('$3')}
       order by u.fullname asc, u.moodle_user_id asc`,
-    [course.id, config.includeStaff],
+    [course.id, config.includeStaff, config.excludeUserIds],
   );
   const users = userRows.map(toUser);
   if (users.length === 0) return { type: 'badge_cards', users: [] };
+
+  const { rows: completionRows } = await sql<{ moodle_user_id: number; percent: number | null }>(
+    `select moodle_user_id, percent_complete as percent
+       from completion_snapshot
+      where moodle_course_id = $1 and moodle_user_id = any($2::int[])`,
+    [course.id, users.map((user) => user.id)],
+  );
+  const percentByUser = new Map(completionRows.map((row) => [row.moodle_user_id, row.percent]));
 
   // Badges attributed to this course, plus site-wide badges the user holds.
   const { rows: badgeRows } = await sql<UserBadgeRow>(
@@ -347,10 +375,16 @@ async function badgeCards(
   }
 
   // Users with no badges are kept: the card renders an empty state.
-  return {
-    type: 'badge_cards',
-    users: users.map((user) => ({ user, badges: byUser.get(user.id) ?? [] })),
-  };
+  // Ordered by badge count so the UI can decorate the top three placings, with
+  // name as the tie-break so equal counts stay in a stable order.
+  const cards = users.map((user) => ({
+    user,
+    badges: byUser.get(user.id) ?? [],
+    percent: percentByUser.get(user.id) ?? null,
+  }));
+  cards.sort((a, b) => b.badges.length - a.badges.length || a.user.fullname.localeCompare(b.user.fullname));
+
+  return { type: 'badge_cards', users: cards };
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +394,7 @@ async function badgeCards(
 async function courseOverview(
   config: WidgetConfig['course_overview'],
 ): Promise<WidgetData | WidgetDataError> {
+  if (config.courseId === null) return fail('No course selected for this widget.');
   const course = await findCourse(config.courseId);
   if (course === null) return fail(COURSE_GONE);
 
@@ -375,8 +410,9 @@ async function courseOverview(
          on cs.moodle_course_id = e.moodle_course_id
         and cs.moodle_user_id = e.moodle_user_id
       where e.moodle_course_id = $1
-        and ${studentFilter('$2')}`,
-    [course.id, config.includeStaff],
+        and ${studentFilter('$2')}
+        and ${excludeFilter('$3')}`,
+    [course.id, config.includeStaff, config.excludeUserIds],
   );
 
   const row = rows[0];
@@ -427,9 +463,10 @@ async function leaderboard(
          where e.moodle_user_id = u.moodle_user_id
            and ($2::int is null or e.moodle_course_id = $2::int)
            and ${studentFilter('$1')}
+           and ${excludeFilter('$3')}
       )
       order by badge_count desc, u.fullname asc, u.moodle_user_id asc`,
-    [config.includeStaff, scopedCourseId],
+    [config.includeStaff, scopedCourseId, config.excludeUserIds],
   );
 
   const all = rows.map((row) => ({ user: toUser(row), badgeCount: row.badge_count }));
@@ -446,6 +483,7 @@ async function leaderboard(
 // ---------------------------------------------------------------------------
 
 async function userList(config: WidgetConfig['user_list']): Promise<WidgetData | WidgetDataError> {
+  if (config.userId === null) return fail('No student selected for this widget.');
   const user = await findUser(config.userId);
   if (user === null) return fail(USER_GONE);
 

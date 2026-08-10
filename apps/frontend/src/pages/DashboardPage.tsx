@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [newName, setNewName] = useState('');
   const [adding, setAdding] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -105,6 +106,10 @@ export default function DashboardPage() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" />
+            New dashboard
+          </Button>
           <Button variant="subtle" size="sm" onClick={() => setAdding(true)}>
             <Plus className="h-4 w-4" />
             Add widget
@@ -144,35 +149,59 @@ export default function DashboardPage() {
         }}
       />
 
-      <div className="mt-6">
-        <NewDashboardInline onCreate={create} />
-      </div>
+      <NewDashboardDialog
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreate={async (name) => {
+          setCreating(false);
+          await create(name);
+        }}
+      />
     </>
   );
 }
 
-function NewDashboardInline({ onCreate }: { onCreate: (name: string) => Promise<void> }) {
+function NewDashboardDialog({
+  open,
+  onClose,
+  onCreate,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreate: (name: string) => Promise<void>;
+}) {
   const [name, setName] = useState('');
+
   return (
-    <form
-      className="flex max-w-sm gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!name.trim()) return;
-        void onCreate(name.trim());
-        setName('');
-      }}
-    >
-      <Input
-        value={name}
-        placeholder="New dashboard…"
-        onChange={(e) => setName(e.target.value)}
-        className="text-xs"
-      />
-      <Button type="submit" variant="subtle" size="sm">
-        Add
-      </Button>
-    </form>
+    <Dialog open={open} onClose={onClose} title="New dashboard">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!name.trim()) return;
+          void onCreate(name.trim());
+          setName('');
+        }}
+        className="space-y-4"
+      >
+        <div>
+          <Label htmlFor="new-dash">Name</Label>
+          <Input
+            id="new-dash"
+            value={name}
+            autoFocus
+            placeholder="e.g. Year 9 progress"
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="subtle" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit">Create</Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 
@@ -237,6 +266,14 @@ function DashboardSettingsDialog({
   onChanged: () => Promise<void>;
   onDeleted: () => void;
 }) {
+  const [publicBaseUrl, setPublicBaseUrl] = useState('');
+  useEffect(() => {
+    if (!open) return;
+    void api
+      .get<{ publicBaseUrl: string }>('/api/bootstrap')
+      .then((b) => setPublicBaseUrl(b.publicBaseUrl))
+      .catch(() => undefined);
+  }, [open]);
   const [name, setName] = useState(dashboard.name);
   const [error, setError] = useState<string | null>(null);
   const [confirmShare, setConfirmShare] = useState(false);
@@ -255,7 +292,7 @@ function DashboardSettingsDialog({
   };
 
   const shareUrl = dashboard.publicShareToken
-    ? `${window.location.origin}/public/${dashboard.publicShareToken}`
+    ? `${publicBaseUrl || window.location.origin}/public/${dashboard.publicShareToken}`
     : null;
 
   return (

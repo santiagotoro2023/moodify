@@ -133,6 +133,37 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     return { logoUrl: assetUrl(stored) };
   });
 
+  /**
+   * Free-form app settings. Only these keys are writable — the logo path is managed
+   * by the upload routes above and must not be settable as raw text.
+   */
+  app.patch('/api/settings', auth, async (request) => {
+    const body = z
+      .object({
+        // Empty string means "fall back to the browser's origin".
+        publicBaseUrl: z
+          .string()
+          .trim()
+          .max(300)
+          .refine((v) => v === '' || /^https?:\/\/[^\s/]+/i.test(v), {
+            message: 'Enter a full URL starting with https:// or http://, or leave it blank.',
+          })
+          .optional(),
+        logoHeight: z.number().int().min(16).max(160).optional(),
+      })
+      .parse(request.body);
+
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined) continue;
+      await sql(
+        `insert into app_settings (key, value) values ($1, $2)
+         on conflict (key) do update set value = excluded.value`,
+        [key === 'publicBaseUrl' ? 'public_base_url' : 'logo_height', String(value).replace(/\/+$/, '')],
+      );
+    }
+    return { ok: true };
+  });
+
   app.delete('/api/settings/logo', auth, async () => {
     const previous = await currentLogoPath();
     await sql('delete from app_settings where key = $1', [LOGO_SETTING_KEY]);

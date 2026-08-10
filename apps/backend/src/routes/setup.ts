@@ -1,4 +1,4 @@
-import type { BootstrapState, ConnectionState, SyncStatus } from '@moodify/shared';
+import { DEFAULT_LOGO_HEIGHT, type BootstrapState, type ConnectionState, type SyncStatus } from '@moodify/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { currentAdminId, endSession, startSession } from '../auth.ts';
@@ -38,6 +38,22 @@ export async function currentLogoUrl(): Promise<string> {
   const relative = stored.trim().replace(/^\/+/, '');
   if (relative === '') return DEFAULT_LOGO_URL;
   return `${ASSETS_URL_PREFIX}/${relative}`;
+}
+
+/** Reads the free-form app_settings keys the frontend needs on boot. */
+export async function currentAppSettings(): Promise<{
+  logoHeight: number;
+  publicBaseUrl: string;
+}> {
+  const { rows } = await sql<{ key: string; value: string | null }>(
+    "select key, value from app_settings where key in ('logo_height', 'public_base_url')",
+  );
+  const byKey = new Map(rows.map((row) => [row.key, row.value]));
+  const height = Number(byKey.get('logo_height'));
+  return {
+    logoHeight: Number.isFinite(height) && height > 0 ? height : DEFAULT_LOGO_HEIGHT,
+    publicBaseUrl: (byKey.get('public_base_url') ?? '').trim(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -153,9 +169,10 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/bootstrap', async (request: FastifyRequest): Promise<BootstrapState> => {
     const hasAdmin = await adminExists();
     const logoUrl = await currentLogoUrl();
+    const settings = await currentAppSettings();
     const adminId = hasAdmin ? await currentAdminId(request) : null;
     const connection = adminId === null ? null : await readConnectionState();
-    return { hasAdmin, connection, logoUrl };
+    return { hasAdmin, connection, logoUrl, ...settings };
   });
 
   /**
