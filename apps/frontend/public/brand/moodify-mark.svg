@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Moodify">
+  <defs>
+    <linearGradient id="moodify-mark-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#moodify-mark-grad)"/>
+  <!-- Progress arc: an open ring, read as a course part-way to completion. -->
+  <path d="M256 92a164 164 0 1 0 164 164"
+        fill="none" stroke="#ffffff" stroke-opacity="0.34"
+        stroke-width="26" stroke-linecap="round"/>
+  <!-- The M, drawn as one rising stroke so it reads as upward motion. -->
+  <path d="M154 336V208c0-8 10-12 15-5l72 92c4 5 11 5 15 0l72-92c5-7 15-3 15 5v128"
+        fill="none" stroke="#ffffff" stroke-width="34"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

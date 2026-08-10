@@ -1,0 +1,96 @@
+@import 'react-grid-layout/css/styles.css';
+@import 'react-resizable/css/styles.css';
+@import 'tailwindcss';
+
+/*
+ * Provisional palette. The Homarr reference screenshot is the visual source of
+ * truth once supplied (§11); these values approximate its conventions — deep
+ * near-black ground, translucent card surfaces, 14px radii, generous padding.
+ */
+@theme {
+  --color-ground: #0b0f14;
+  --color-ground-soft: #111820;
+  --color-surface: rgba(255, 255, 255, 0.045);
+  --color-surface-strong: rgba(255, 255, 255, 0.075);
+  --color-edge: rgba(255, 255, 255, 0.08);
+  --color-edge-strong: rgba(255, 255, 255, 0.16);
+  --color-ink: #e6edf3;
+  --color-muted: #8b98a5;
+  --color-accent: #6366f1;
+  --color-accent-soft: #8b5cf6;
+  --color-good: #10b981;
+  --color-warn: #f59e0b;
+  --color-bad: #f43f5e;
+
+  --radius-widget: 14px;
+  --radius-modal: 20px;
+
+  --shadow-widget: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow-modal: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background-color: var(--color-ground);
+  color: var(--color-ink);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* The sticky background layer sits behind this; never let the body paint over it. */
+  background-attachment: scroll;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-edge-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-edge-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* react-grid-layout ships a red placeholder; make it match the theme. */
+.react-grid-item.react-grid-placeholder {
+  background: var(--color-accent) !important;
+  opacity: 0.18 !important;
+  border-radius: var(--radius-widget);
+}
+
+.react-grid-item > .react-resizable-handle::after {
+  border-right-color: var(--color-edge-strong);
+  border-bottom-color: var(--color-edge-strong);
+}
+
+.widget-drag-handle {
+  cursor: grab;
+  touch-action: none;
+}
+
+.widget-drag-handle:active {
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
