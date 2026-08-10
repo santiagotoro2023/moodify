@@ -11,6 +11,7 @@ import { z } from 'zod';
 export const WIDGET_TYPES = [
   'completion_table',
   'badge_cards',
+  'badge_list',
   'course_overview',
   'leaderboard',
   'user_list',
@@ -52,6 +53,9 @@ export const badgeCardsConfig = z.object({
   excludeUserIds,
 });
 
+/** Same scoping as badge_cards; the widget just omits the completion bar. */
+export const badgeListConfig = badgeCardsConfig;
+
 export const courseOverviewConfig = z.object({
   courseId: courseId.nullable().default(null),
   includeStaff: z.boolean().default(false),
@@ -73,6 +77,7 @@ export const userListConfig = z.object({
 export const WIDGET_CONFIG_SCHEMAS = {
   completion_table: completionTableConfig,
   badge_cards: badgeCardsConfig,
+  badge_list: badgeListConfig,
   course_overview: courseOverviewConfig,
   leaderboard: leaderboardConfig,
   user_list: userListConfig,
@@ -81,6 +86,7 @@ export const WIDGET_CONFIG_SCHEMAS = {
 export type WidgetConfig = {
   completion_table: z.infer<typeof completionTableConfig>;
   badge_cards: z.infer<typeof badgeCardsConfig>;
+  badge_list: z.infer<typeof badgeListConfig>;
   course_overview: z.infer<typeof courseOverviewConfig>;
   leaderboard: z.infer<typeof leaderboardConfig>;
   user_list: z.infer<typeof userListConfig>;
@@ -99,7 +105,8 @@ export const WIDGET_DEFAULTS: {
   [T in WidgetType]: { config: unknown; w: number; h: number; title: string };
 } = {
   completion_table: { config: { scope: 'all' }, w: 6, h: 6, title: 'Completion' },
-  badge_cards: { config: { scope: 'course' }, w: 4, h: 5, title: 'Badges' },
+  badge_cards: { config: { scope: 'course' }, w: 4, h: 4, title: 'Badges & progress' },
+  badge_list: { config: { scope: 'course' }, w: 4, h: 4, title: 'Badges' },
   course_overview: { config: {}, w: 3, h: 3, title: 'Course overview' },
   leaderboard: { config: { scope: 'all', limit: 10 }, w: 3, h: 5, title: 'Leaderboard' },
   user_list: { config: { scope: 'all' }, w: 4, h: 5, title: 'User' },
@@ -236,6 +243,11 @@ export interface BadgeCardsData {
   users: { user: MoodleUser; badges: Badge[]; percent: number | null }[];
 }
 
+/** Same rows as badge_cards, rendered without the completion bar. */
+export interface BadgeListData extends Omit<BadgeCardsData, 'type'> {
+  type: 'badge_list';
+}
+
 export interface CourseOverviewData {
   type: 'course_overview';
   course: Course;
@@ -260,6 +272,7 @@ export interface UserListData {
 export type WidgetData =
   | CompletionTableData
   | BadgeCardsData
+  | BadgeListData
   | CourseOverviewData
   | LeaderboardData
   | UserListData;

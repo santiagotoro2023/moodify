@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
   BadgeCardsData,
+  BadgeListData,
   Badge as BadgeType,
   CompletionEntry,
   CompletionTableData,
@@ -11,7 +12,7 @@ import type {
   WidgetData,
   WidgetDataError,
 } from '@moodify/shared';
-import { Award, BookOpen, Table2, Trophy, User } from 'lucide-react';
+import { Award, BookOpen, Medal, Table2, Trophy, User } from 'lucide-react';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, EmptyState, ErrorNote, Spinner } from '@/ui';
 
@@ -54,34 +55,39 @@ function BadgeImage({ badge }: { badge: BadgeType }) {
 
   if (!url || failed) {
     return (
-      <span className="grid h-12 w-12 place-items-center rounded-xl bg-white/8" title={badge.name}>
-        <Award className="h-6 w-6 text-muted" aria-hidden="true" />
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-white/8">
+        <Award className="h-4 w-4 text-muted" aria-hidden="true" />
       </span>
     );
   }
   return (
     <img
       src={url}
-      alt={badge.name}
+      alt=""
       loading="lazy"
-      className="h-12 w-12 rounded-xl object-contain"
+      className="h-7 w-7 shrink-0 object-contain"
       onError={() => setFailed(true)}
     />
   );
 }
 
+/**
+ * Icon + full name as one chip. Names wrap instead of truncating (they are the point
+ * of the widget) while each badge still costs a single line of height.
+ */
 function BadgeList({ badges }: { badges: BadgeType[] }) {
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
   return (
-    <ul className="flex flex-wrap gap-3">
+    <ul className="flex flex-wrap gap-1.5">
       {badges.map((badge) => (
-        <li key={badge.id} className="w-16 text-center">
+        <li
+          key={badge.id}
+          className="flex items-center gap-1.5 rounded-full bg-white/6 py-0.5 pl-0.5 pr-2.5"
+        >
           <BadgeImage badge={badge} />
-          <p className="mt-1 truncate text-[11px] text-muted" title={badge.name}>
-            {badge.name}
-          </p>
+          <span className="text-[11px] leading-tight">{badge.name}</span>
         </li>
       ))}
     </ul>
@@ -145,7 +151,17 @@ const PLACE_STYLES = [
   { ring: 'ring-amber-700/50', text: 'text-amber-600', label: '3rd' },
 ];
 
-function BadgeCards({ data }: { data: BadgeCardsData }) {
+/**
+ * One compact row per student, so a class of six fits on a wall display without
+ * scrolling. `showProgress` is the only difference between the two badge widgets.
+ */
+function BadgeCards({
+  data,
+  showProgress,
+}: {
+  data: BadgeCardsData | BadgeListData;
+  showProgress: boolean;
+}) {
   if (data.users.length === 0) {
     return <EmptyState icon={<Award className="h-6 w-6" />} title="Nobody enrolled yet" />;
   }
@@ -153,51 +169,45 @@ function BadgeCards({ data }: { data: BadgeCardsData }) {
   // Rows are pre-sorted by badge count, but only award a trophy to someone who
   // actually holds badges — otherwise an empty course hands out three trophies.
   return (
-    <div className="space-y-2 overflow-auto">
+    <div className="space-y-1 overflow-auto">
       {data.users.map((entry, index) => {
         const place = entry.badges.length > 0 ? PLACE_STYLES[index] : undefined;
         return (
           <div
             key={entry.user.id}
             className={cn(
-              'rounded-xl border border-edge bg-white/3 p-3',
+              'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-edge bg-white/3 px-2.5 py-1.5',
               place && `ring-1 ${place.ring}`,
             )}
           >
-            <div className="mb-2 flex items-center gap-2">
-              {place ? (
-                <span className={cn('flex shrink-0 items-center gap-1 text-xs', place.text)}>
-                  <Trophy className="h-4 w-4" />
-                  {place.label}
+            {place ? (
+              <Trophy className={cn('h-3.5 w-3.5 shrink-0', place.text)} aria-label={place.label} />
+            ) : null}
+            <span className="truncate text-sm font-medium">{entry.user.fullname}</span>
+
+            {showProgress ? (
+              entry.percent === null ? (
+                <span className="shrink-0 text-xs text-muted" title="No completion-tracked activities">
+                  not tracked
                 </span>
-              ) : null}
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                {entry.user.fullname}
-              </span>
-              <span className="shrink-0 text-xs tabular-nums text-muted">
-                {entry.badges.length} {entry.badges.length === 1 ? 'badge' : 'badges'}
-              </span>
+              ) : (
+                <span className="flex w-24 shrink-0 items-center gap-1.5">
+                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                    <span
+                      className={cn('block h-full rounded-full', bandClass(entry.percent))}
+                      style={{ width: `${entry.percent}%` }}
+                    />
+                  </span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted">
+                    {Math.round(entry.percent)}%
+                  </span>
+                </span>
+              )
+            ) : null}
+
+            <div className="min-w-0 flex-1">
+              <BadgeList badges={entry.badges} />
             </div>
-
-            {entry.percent === null ? (
-              <p className="mb-2 text-xs text-muted" title="No completion-tracked activities">
-                Completion not tracked
-              </p>
-            ) : (
-              <div className="mb-2 flex items-center gap-2">
-                <span className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                  <span
-                    className={cn('block h-full rounded-full', bandClass(entry.percent))}
-                    style={{ width: `${entry.percent}%` }}
-                  />
-                </span>
-                <span className="shrink-0 text-xs tabular-nums text-muted">
-                  {Math.round(entry.percent)}%
-                </span>
-              </div>
-            )}
-
-            <BadgeList badges={entry.badges} />
           </div>
         );
       })}
@@ -303,6 +313,7 @@ export function autoTitle(widget: Widget, data: Payload | null): string {
           ? `Completion — ${data.courses[0].fullname}`
           : 'Completion — all courses';
       case 'badge_cards':
+      case 'badge_list':
         return data.users.length === 1 && data.users[0]
           ? `Badges — ${data.users[0].user.fullname}`
           : 'Badges';
@@ -316,7 +327,8 @@ export function autoTitle(widget: Widget, data: Payload | null): string {
   }
   const labels: Record<Widget['type'], string> = {
     completion_table: 'Completion',
-    badge_cards: 'Badges',
+    badge_cards: 'Badges & progress',
+    badge_list: 'Badges',
     course_overview: 'Course overview',
     leaderboard: 'Leaderboard',
     user_list: 'User',
@@ -336,8 +348,13 @@ export const WIDGET_META: Record<
   badge_cards: {
     label: 'Badges & progress',
     description:
-      'A row per student: completion, every badge icon they hold, and gold/silver/bronze for the top three.',
+      'A row per student: completion, every badge they hold, and gold/silver/bronze for the top three.',
     icon: Award,
+  },
+  badge_list: {
+    label: 'Badges',
+    description: 'The same rows without the completion bar — badges only.',
+    icon: Medal,
   },
   course_overview: {
     label: 'Course overview',
@@ -428,7 +445,9 @@ export function WidgetBody({
     case 'completion_table':
       return <CompletionTable data={data} />;
     case 'badge_cards':
-      return <BadgeCards data={data} />;
+      return <BadgeCards data={data} showProgress />;
+    case 'badge_list':
+      return <BadgeCards data={data} showProgress={false} />;
     case 'course_overview':
       return <CourseOverview data={data} />;
     case 'leaderboard':

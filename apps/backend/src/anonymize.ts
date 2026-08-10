@@ -98,7 +98,8 @@ export function anonymizeWidgetData(data: WidgetData, shared?: Map<number, strin
         rows: data.rows.map((row) => ({ ...row, user: relabel(row.user, labels) })),
       };
     }
-    case 'badge_cards': {
+    case 'badge_cards':
+    case 'badge_list': {
       const labels = buildLabelsFor(data.users.map((entry) => entry.user));
       return {
         ...data,

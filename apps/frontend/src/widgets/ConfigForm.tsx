@@ -209,7 +209,7 @@ export function WidgetConfigForm({
         </>
       ) : null}
 
-      {widget.type === 'badge_cards' ? (
+      {widget.type === 'badge_cards' || widget.type === 'badge_list' ? (
         <>
           <div>
             <Label htmlFor={id('bscope')}>Scope</Label>

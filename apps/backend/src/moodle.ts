@@ -646,7 +646,36 @@ function withTokenAuth(fileUrl: string, token: string): string {
  * Badge images live behind pluginfile.php, which needs authentication — the frontend must
  * never hotlink Moodle (§9.3). Fetch once with a token query param, cache locally.
  */
+/**
+ * Badge image URLs end in a size suffix (`/f1`, `/f2`, `/f3`). Which sizes exist depends
+ * on the Moodle version — the exporter can hand back an `f3` that badges_pluginfile()
+ * then refuses — so a failed download is retried against the other sizes before giving up.
+ */
+function sizeVariants(imageUrl: string): string[] {
+  const match = /\/f[123](\?|$)/.exec(imageUrl);
+  if (match === null) return [imageUrl];
+  const current = imageUrl.slice(match.index + 1, match.index + 3);
+  return [imageUrl, ...['f3', 'f2', 'f1'].filter((size) => size !== current)
+    .map((size) => imageUrl.slice(0, match.index) + '/' + size + imageUrl.slice(match.index + 3))];
+}
+
 export async function downloadBadgeImage(
+  conn: MoodleConnection,
+  imageUrl: string,
+): Promise<{ buffer: Buffer; contentType: string }> {
+  const [first, ...rest] = sizeVariants(imageUrl);
+  let lastError: unknown;
+  for (const candidate of [first ?? imageUrl, ...rest]) {
+    try {
+      return await fetchBadgeImage(conn, candidate);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
+async function fetchBadgeImage(
   conn: MoodleConnection,
   imageUrl: string,
 ): Promise<{ buffer: Buffer; contentType: string }> {

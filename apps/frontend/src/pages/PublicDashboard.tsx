@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import type { Dashboard } from '@moodify/shared';
+import { DEFAULT_LOGO_HEIGHT, type Dashboard } from '@moodify/shared';
 import { EyeOff } from 'lucide-react';
 import { api, assetUrl, errorMessage } from '@/lib/api';
 import { Button, Card, Spinner } from '@/ui';
+import { useBootstrap } from '@/App';
 import { DashboardGrid, StickyBackground } from '@/components/DashboardGrid';
 
 interface PublicPayload {
@@ -18,6 +19,9 @@ interface PublicPayload {
  */
 export default function PublicDashboard() {
   const { token } = useParams();
+  // Public pages carry the admin's branding too — /api/bootstrap is unauthenticated
+  // and exposes nothing beyond the logo and setup state.
+  const { state: brand } = useBootstrap();
   const [payload, setPayload] = useState<PublicPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -80,7 +84,15 @@ export default function PublicDashboard() {
       <StickyBackground imageUrl={assetUrl(payload.dashboard.backgroundImagePath)} />
 
       <header className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-5 py-5">
-        <img src="/brand/moodify-logo.svg" alt="Moodify" className="h-7 w-auto opacity-80" />
+        <img
+          src={brand?.logoUrl || '/brand/moodify-logo.svg'}
+          alt="Moodify"
+          className="w-auto shrink-0"
+          style={{ height: `${brand?.logoHeight ?? DEFAULT_LOGO_HEIGHT}px` }}
+          onError={(event) => {
+            event.currentTarget.src = '/brand/moodify-logo.svg';
+          }}
+        />
         <h1 className="text-lg font-semibold">{payload.dashboard.name}</h1>
         {payload.anonymized ? (
           <span className="ml-auto flex items-center gap-1.5 text-xs text-muted">

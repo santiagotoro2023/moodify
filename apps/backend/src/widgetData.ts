@@ -304,6 +304,7 @@ async function completionTable(
 
 async function badgeCards(
   config: WidgetConfig['badge_cards'],
+  type: 'badge_cards' | 'badge_list' = 'badge_cards',
 ): Promise<WidgetData | WidgetDataError> {
   if (config.scope === 'user') {
     if (config.userId === null) return fail('No user selected for this widget.');
@@ -325,7 +326,7 @@ async function badgeCards(
       [user.id],
     );
     return {
-      type: 'badge_cards',
+      type,
       users: [{ user, badges: rows.map(toBadge), percent: pct[0]?.percent ?? null }],
     };
   }
@@ -345,7 +346,7 @@ async function badgeCards(
     [course.id, config.includeStaff, config.excludeUserIds],
   );
   const users = userRows.map(toUser);
-  if (users.length === 0) return { type: 'badge_cards', users: [] };
+  if (users.length === 0) return { type, users: [] };
 
   const { rows: completionRows } = await sql<{ moodle_user_id: number; percent: number | null }>(
     `select moodle_user_id, percent_complete as percent
@@ -384,7 +385,7 @@ async function badgeCards(
   }));
   cards.sort((a, b) => b.badges.length - a.badges.length || a.user.fullname.localeCompare(b.user.fullname));
 
-  return { type: 'badge_cards', users: cards };
+  return { type, users: cards };
 }
 
 // ---------------------------------------------------------------------------
@@ -566,6 +567,8 @@ export async function resolveWidgetData(widget: {
         return await completionTable(parseWidgetConfig('completion_table', widget.config));
       case 'badge_cards':
         return await badgeCards(parseWidgetConfig('badge_cards', widget.config));
+      case 'badge_list':
+        return await badgeCards(parseWidgetConfig('badge_list', widget.config), 'badge_list');
       case 'course_overview':
         return await courseOverview(parseWidgetConfig('course_overview', widget.config));
       case 'leaderboard':

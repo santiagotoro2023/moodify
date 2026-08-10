@@ -337,8 +337,12 @@ async function cacheBadgeImage(ctx: RunContext, badgeId: number, imageUrl: strin
       `badges/${filename}`,
     ]);
   } catch (err) {
-    // §9.3: a broken image is cosmetic. Never let it fail the sync.
-    ctx.logger.warn({ badgeId, err: describeError(err) }, 'badge image download failed');
+    // §9.3: a broken image is cosmetic. Never let it fail the sync — but log loudly,
+    // since the only symptom in the UI is a generic placeholder icon.
+    ctx.logger.error(
+      { badgeId, imageUrl, err: describeError(err) },
+      'badge image download failed — widgets will show a placeholder icon',
+    );
   }
 }
 
