@@ -7,7 +7,7 @@ import { DEFAULT_POLL_INTERVAL_SECONDS } from '../config.ts';
 import { decryptSecret, encryptSecret, tokenHint } from '../crypto.ts';
 import { sql } from '../db.ts';
 import { MoodleError, fetchToken, getSiteInfo, normalizeBaseUrl } from '../moodle.ts';
-import { getSyncProgress, loadConnection, triggerSync } from '../sync.ts';
+import { fetchAndStoreBadgeImage, getSyncProgress, loadConnection, triggerSync } from '../sync.ts';
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -335,6 +335,37 @@ export async function connectionRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/api/sync/progress', { preHandler: requireAdmin }, async (): Promise<SyncProgress> => {
     return getSyncProgress();
+  });
+
+  /**
+   * Badge image diagnostics: retries every badge whose image is still missing and
+   * reports what Moodle said. A failed image is silent in the UI (widgets just show a
+   * placeholder), so this is the only way to see the reason without reading logs.
+   */
+  app.get('/api/badges/images', { preHandler: requireAdmin }, async (_request, reply) => {
+    const conn = await loadConnection().catch(() => null);
+    if (conn === null) return reply.code(409).send({ error: 'No Moodle connection configured' });
+
+    const { rows } = await sql<{ id: number; name: string; cached: string | null; url: string | null }>(
+      `select moodle_badge_id as id, name, cached_image_path as cached, source_url as url
+         from badges order by name`,
+    );
+    const results = [];
+    for (const row of rows) {
+      if (row.cached !== null) {
+        results.push({ id: row.id, name: row.name, status: 'cached' });
+      } else if (row.url === null) {
+        results.push({ id: row.id, name: row.name, status: 'no image url from Moodle — re-sync first' });
+      } else {
+        try {
+          await fetchAndStoreBadgeImage(conn, row.id, row.url);
+          results.push({ id: row.id, name: row.name, status: 'downloaded now' });
+        } catch (err) {
+          results.push({ id: row.id, name: row.name, status: `failed: ${readableError(err)}`, url: row.url });
+        }
+      }
+    }
+    return results;
   });
 
   app.get('/api/courses', { preHandler: requireAdmin }, async (): Promise<Course[]> => {

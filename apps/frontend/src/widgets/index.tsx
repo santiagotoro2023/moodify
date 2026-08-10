@@ -55,8 +55,8 @@ function BadgeImage({ badge }: { badge: BadgeType }) {
 
   if (!url || failed) {
     return (
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-white/8">
-        <Award className="h-4 w-4 text-muted" aria-hidden="true" />
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/8">
+        <Award className="h-5 w-5 text-muted" aria-hidden="true" />
       </span>
     );
   }
@@ -65,29 +65,30 @@ function BadgeImage({ badge }: { badge: BadgeType }) {
       src={url}
       alt=""
       loading="lazy"
-      className="h-7 w-7 shrink-0 object-contain"
+      className="h-9 w-9 shrink-0 object-contain"
       onError={() => setFailed(true)}
     />
   );
 }
 
 /**
- * Icon + full name as one chip. Names wrap instead of truncating (they are the point
- * of the widget) while each badge still costs a single line of height.
+ * Icon + full name as one chip. Names sit beside the icon rather than under it, so
+ * they show in full without each badge costing a whole block of height.
  */
 function BadgeList({ badges }: { badges: BadgeType[] }) {
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
   return (
-    <ul className="flex flex-wrap gap-1.5">
+    <ul className="flex flex-wrap gap-2">
       {badges.map((badge) => (
         <li
           key={badge.id}
-          className="flex items-center gap-1.5 rounded-full bg-white/6 py-0.5 pl-0.5 pr-2.5"
+          className="flex items-center gap-2 rounded-full bg-white/6 py-1 pl-1 pr-3"
+          title={badge.description ?? badge.name}
         >
           <BadgeImage badge={badge} />
-          <span className="text-[11px] leading-tight">{badge.name}</span>
+          <span className="text-xs leading-snug">{badge.name}</span>
         </li>
       ))}
     </ul>
@@ -144,16 +145,20 @@ function CompletionTable({ data }: { data: CompletionTableData }) {
   );
 }
 
-/** Gold / silver / bronze for the top three badge counts. */
+/**
+ * Gold / silver / bronze for the top three badge counts. The accent lives on the
+ * card's own border rather than a ring: a ring is a box-shadow, so it gets clipped
+ * by the scroll container and the top and bottom rows look cut off.
+ */
 const PLACE_STYLES = [
-  { ring: 'ring-amber-400/50', text: 'text-amber-300', label: '1st' },
-  { ring: 'ring-slate-300/40', text: 'text-slate-300', label: '2nd' },
-  { ring: 'ring-amber-700/50', text: 'text-amber-600', label: '3rd' },
+  { border: 'border-amber-400/50', text: 'text-amber-300', label: '1st' },
+  { border: 'border-slate-300/40', text: 'text-slate-300', label: '2nd' },
+  { border: 'border-amber-700/60', text: 'text-amber-600', label: '3rd' },
 ];
 
 /**
- * One compact row per student, so a class of six fits on a wall display without
- * scrolling. `showProgress` is the only difference between the two badge widgets.
+ * One card per student, stacked in bands: who, then how far along, then which badges.
+ * `showProgress` is the only difference between the two badge widgets.
  */
 function BadgeCards({
   data,
@@ -169,43 +174,50 @@ function BadgeCards({
   // Rows are pre-sorted by badge count, but only award a trophy to someone who
   // actually holds badges — otherwise an empty course hands out three trophies.
   return (
-    <div className="space-y-1 overflow-auto">
+    <div className="space-y-3">
       {data.users.map((entry, index) => {
         const place = entry.badges.length > 0 ? PLACE_STYLES[index] : undefined;
         return (
           <div
             key={entry.user.id}
             className={cn(
-              'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-edge bg-white/3 px-2.5 py-1.5',
-              place && `ring-1 ${place.ring}`,
+              'space-y-3 rounded-xl border bg-white/3 p-4',
+              place ? place.border : 'border-edge',
             )}
           >
-            {place ? (
-              <Trophy className={cn('h-3.5 w-3.5 shrink-0', place.text)} aria-label={place.label} />
-            ) : null}
-            <span className="truncate text-sm font-medium">{entry.user.fullname}</span>
+            <div className="flex items-center gap-2">
+              {place ? (
+                <span className={cn('flex shrink-0 items-center gap-1.5 text-xs', place.text)}>
+                  <Trophy className="h-4 w-4" />
+                  {place.label}
+                </span>
+              ) : null}
+              <span className="min-w-0 flex-1 truncate font-medium">{entry.user.fullname}</span>
+              <span className="shrink-0 text-xs tabular-nums text-muted">
+                {entry.badges.length} {entry.badges.length === 1 ? 'badge' : 'badges'}
+              </span>
+            </div>
 
             {showProgress ? (
               entry.percent === null ? (
-                <span className="shrink-0 text-xs text-muted" title="No completion-tracked activities">
-                  not tracked
-                </span>
+                <p className="text-xs text-muted">Completion not tracked</p>
               ) : (
-                <span className="flex w-24 shrink-0 items-center gap-1.5">
-                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                // Full width: the bar is the headline number of this widget.
+                <div className="flex items-center gap-3">
+                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
                     <span
                       className={cn('block h-full rounded-full', bandClass(entry.percent))}
                       style={{ width: `${entry.percent}%` }}
                     />
                   </span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-muted">
+                  <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted">
                     {Math.round(entry.percent)}%
                   </span>
-                </span>
+                </div>
               )
             ) : null}
 
-            <div className="min-w-0 flex-1">
+            <div className="border-t border-edge/60 pt-3">
               <BadgeList badges={entry.badges} />
             </div>
           </div>

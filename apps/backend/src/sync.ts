@@ -249,14 +249,15 @@ async function upsertBadge(badge: UserBadge): Promise<string | null> {
   // course Moodify has not discovered (hidden, or deleted since), instead of an FK error.
   // coalesce keeps a previously-learned course id when a site-wide lookup omits it.
   const { rows } = await sql<CachedImageRow>(
-    `insert into badges (moodle_badge_id, moodle_course_id, name, description)
-     values ($1, (select moodle_course_id from courses where moodle_course_id = $2), $3, $4)
+    `insert into badges (moodle_badge_id, moodle_course_id, name, description, source_url)
+     values ($1, (select moodle_course_id from courses where moodle_course_id = $2), $3, $4, $5)
      on conflict (moodle_badge_id) do update
         set moodle_course_id = coalesce(excluded.moodle_course_id, badges.moodle_course_id),
             name             = excluded.name,
-            description      = excluded.description
+            description      = excluded.description,
+            source_url       = coalesce(excluded.source_url, badges.source_url)
      returning cached_image_path`,
-    [badge.id, badge.courseid, badge.name, badge.description],
+    [badge.id, badge.courseid, badge.name, badge.description, badge.badgeurl],
   );
   return rows[0]?.cached_image_path ?? null;
 }
@@ -324,18 +325,27 @@ function publishCounters(ctx: RunContext, force = false): void {
   progress.badges = ctx.badgeIds.size;
 }
 
+/** Downloads one badge image and records it. Throws — callers decide how loud to be. */
+export async function fetchAndStoreBadgeImage(
+  conn: MoodleConnection,
+  badgeId: number,
+  imageUrl: string,
+): Promise<void> {
+  const { buffer, contentType } = await downloadBadgeImage(conn, imageUrl);
+  const filename = `${badgeId}.${extensionFor(contentType)}`;
+  const directory = join(ASSETS_DIR, 'badges');
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, filename), buffer);
+  // Stored relative to ASSETS_DIR; the API prefixes it with ASSETS_URL_PREFIX.
+  await sql('update badges set cached_image_path = $2 where moodle_badge_id = $1', [
+    badgeId,
+    `badges/${filename}`,
+  ]);
+}
+
 async function cacheBadgeImage(ctx: RunContext, badgeId: number, imageUrl: string): Promise<void> {
   try {
-    const { buffer, contentType } = await downloadBadgeImage(ctx.conn, imageUrl);
-    const filename = `${badgeId}.${extensionFor(contentType)}`;
-    const directory = join(ASSETS_DIR, 'badges');
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, filename), buffer);
-    // Stored relative to ASSETS_DIR; the API prefixes it with ASSETS_URL_PREFIX.
-    await sql('update badges set cached_image_path = $2 where moodle_badge_id = $1', [
-      badgeId,
-      `badges/${filename}`,
-    ]);
+    await fetchAndStoreBadgeImage(ctx.conn, badgeId, imageUrl);
   } catch (err) {
     // §9.3: a broken image is cosmetic. Never let it fail the sync — but log loudly,
     // since the only symptom in the UI is a generic placeholder icon.
