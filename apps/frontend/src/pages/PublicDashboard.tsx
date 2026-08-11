@@ -12,6 +12,9 @@ interface PublicPayload {
   anonymized: boolean;
 }
 
+/** Matches the widget-data refresh in WidgetBody, so the whole page moves together. */
+const REFRESH_MS = 30_000;
+
 /**
  * Read-only public render (§12). Deliberately renders no navigation, no logout and
  * no links into the admin UI — a visitor holding a share link must not be able to
@@ -20,8 +23,9 @@ interface PublicPayload {
 export default function PublicDashboard() {
   const { token } = useParams();
   // Public pages carry the admin's branding too — /api/bootstrap is unauthenticated
-  // and exposes nothing beyond the logo and setup state.
-  const { state: brand } = useBootstrap();
+  // and exposes nothing beyond the logo and setup state. Polled on the same cadence as
+  // everything else here, so a new logo reaches a wall display without a reload.
+  const { state: brand } = useBootstrap(REFRESH_MS);
   const [payload, setPayload] = useState<PublicPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -30,7 +34,10 @@ export default function PublicDashboard() {
     if (!token) return;
     try {
       const next = await api.get<PublicPayload>(`/api/public/${token}`);
-      setPayload(next);
+      // Only swap state when something actually changed. A monitor left running for a
+      // month would otherwise rebuild the whole grid every 30s — react-grid-layout
+      // reflows and every widget re-renders — to arrive at the identical page.
+      setPayload((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
       setError(null);
       document.title = `${next.dashboard.name} — Moodify`;
     } catch (err) {
@@ -45,6 +52,11 @@ export default function PublicDashboard() {
 
   useEffect(() => {
     void load();
+    // Widget *contents* refresh themselves (WidgetBody); this re-reads the dashboard
+    // itself, so adding, renaming, resizing or removing a widget — or changing the
+    // background — reaches an already-open display without anyone touching it.
+    const timer = setInterval(() => void load(), REFRESH_MS);
+    return () => clearInterval(timer);
   }, [load]);
 
   if (notFound) {
@@ -60,7 +72,11 @@ export default function PublicDashboard() {
     );
   }
 
-  if (error) {
+  // Only take over the screen when there is nothing to show. Now that this polls
+  // forever, one blip from the reverse proxy would otherwise replace a working wall
+  // display with an error card that nobody is standing there to dismiss (§9.4: keep
+  // rendering last-known-good). A revoked token still blanks it — that is the point.
+  if (error && !payload) {
     return (
       <div className="grid min-h-screen place-items-center p-6">
         <Card className="max-w-sm text-center">
