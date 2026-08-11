@@ -113,11 +113,41 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+};
+
+/**
+ * Moodle runs names and descriptions through format_string(), which HTML-escapes them
+ * before they ever reach the web service — so a course called "Firewalls & Sicherheit"
+ * arrives as "Firewalls &amp; Sicherheit". Decode once here, at the edge, rather than
+ * in every renderer: React escapes on output, so what we store must be plain text.
+ */
+export function decodeEntities(value: string): string {
+  if (!value.includes('&')) return value;
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, body: string) => {
+    if (body.startsWith('#')) {
+      const code = body[1]?.toLowerCase() === 'x'
+        ? Number.parseInt(body.slice(2), 16)
+        : Number.parseInt(body.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : match;
+    }
+    return NAMED_ENTITIES[body.toLowerCase()] ?? match;
+  });
+}
+
 function readString(source: unknown, key: string): string | null {
   const rec = asRecord(source);
   if (!rec) return null;
   const value = rec[key];
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return decodeEntities(value);
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return null;
 }

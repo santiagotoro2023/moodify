@@ -3,7 +3,9 @@ import type { Dashboard } from '@moodify/shared';
 import { z } from 'zod';
 import { anonymizeWidgetData, globalStudentLabels } from '../anonymize.ts';
 import { requireAdmin } from '../auth.ts';
+import { ASSETS_URL_PREFIX } from '../config.ts';
 import { sql } from '../db.ts';
+import { fetchAndStoreBadgeImage, loadConnection } from '../sync.ts';
 import { UploadError, assetUrl, deleteUpload, saveImageUpload } from '../uploads.ts';
 import { resolveWidgetData } from '../widgetData.ts';
 import { loadWidgets } from './dashboards.ts';
@@ -44,6 +46,51 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
   // -------------------------------------------------------------------------
   // Public share routes — the only routes in the app reachable without a session.
   // -------------------------------------------------------------------------
+
+  /**
+   * Badge images, by badge id. Unauthenticated because public dashboards render them,
+   * and a badge icon carries no personal data — who holds it is the guarded part.
+   *
+   * On a cache miss this downloads from Moodle right now instead of waiting for the
+   * next sync: an image that failed once would otherwise stay a placeholder forever,
+   * with the reason buried in the logs.
+   */
+  app.get('/api/badge-image/:badgeId', async (request, reply) => {
+    const { badgeId } = z
+      .object({ badgeId: z.coerce.number().int().positive() })
+      .parse(request.params);
+
+    const { rows } = await sql<{ cached: string | null; url: string | null }>(
+      'select cached_image_path as cached, source_url as url from badges where moodle_badge_id = $1',
+      [badgeId],
+    );
+    const row = rows[0];
+    if (row === undefined) return reply.code(404).send({ error: 'No such badge' });
+
+    if (row.cached === null && row.url !== null) {
+      const conn = await loadConnection().catch(() => null);
+      if (conn !== null) {
+        // ponytail: concurrent misses download the same image twice. Harmless at
+        // <50 users; add an in-flight map if a class ever refreshes in lockstep.
+        try {
+          await fetchAndStoreBadgeImage(conn, badgeId, row.url);
+        } catch (err) {
+          request.log.error({ badgeId, err }, 'on-demand badge image download failed');
+          return reply.code(502).send({ error: 'Badge image could not be fetched from Moodle' });
+        }
+      }
+    }
+
+    const { rows: after } = await sql<{ cached: string | null }>(
+      'select cached_image_path as cached from badges where moodle_badge_id = $1',
+      [badgeId],
+    );
+    const path = after[0]?.cached ?? null;
+    if (path === null) return reply.code(404).send({ error: 'No image for this badge' });
+    // Redirect rather than stream: fastify-static already serves ASSETS_DIR with
+    // proper caching and range support.
+    return reply.redirect(`${ASSETS_URL_PREFIX}/${path.replace(/^\/+/, '')}`, 302);
+  });
 
   app.get('/api/public/:token', async (request, reply) => {
     const { token } = tokenParams.parse(request.params);

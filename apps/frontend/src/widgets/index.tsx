@@ -13,10 +13,34 @@ import type {
   WidgetDataError,
 } from '@moodify/shared';
 import { Award, BookOpen, Medal, Table2, Trophy, User } from 'lucide-react';
+import type { Density } from '@moodify/shared';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, EmptyState, ErrorNote, Spinner } from '@/ui';
 
 type Payload = WidgetData | WidgetDataError;
+
+/**
+ * Row size, set per widget in its settings. One scale drives every renderer so a
+ * dashboard set to "compact" is compact everywhere, not just in the table.
+ */
+const DENSITY: Record<Density, {
+  gap: string;
+  pad: string;
+  cell: string;
+  text: string;
+  icon: string;
+  bar: string;
+}> = {
+  compact: { gap: 'space-y-1.5', pad: 'p-2.5', cell: 'px-2 py-1', text: 'text-xs', icon: 'h-6 w-6', bar: 'h-1.5' },
+  normal: { gap: 'space-y-3', pad: 'p-4', cell: 'px-2 py-2', text: 'text-sm', icon: 'h-9 w-9', bar: 'h-2' },
+  roomy: { gap: 'space-y-4', pad: 'p-5', cell: 'px-3 py-3.5', text: 'text-base', icon: 'h-12 w-12', bar: 'h-2.5' },
+};
+
+/** Widget configs are stored as opaque JSON; only the density field matters here. */
+function densityOf(config: unknown): Density {
+  const value = (config as { density?: unknown } | null)?.density;
+  return value === 'compact' || value === 'roomy' ? value : 'normal';
+}
 
 /** Colour band for a completion bar. Untracked never reaches here. */
 function bandClass(percent: number): string {
@@ -49,14 +73,16 @@ function ProgressBar({ entry }: { entry: CompletionEntry }) {
   );
 }
 
-function BadgeImage({ badge }: { badge: BadgeType }) {
+function BadgeImage({ badge, size }: { badge: BadgeType; size: string }) {
   const [failed, setFailed] = useState(false);
   const url = assetUrl(badge.imageUrl);
 
+  // rounded-full, not rounded-lg: the image sits inside a pill, and a squarer corner
+  // radius on the inner element reads as an unfinished edge.
   if (!url || failed) {
     return (
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/8">
-        <Award className="h-5 w-5 text-muted" aria-hidden="true" />
+      <span className={cn('grid shrink-0 place-items-center rounded-full bg-white/8', size)}>
+        <Award className="h-1/2 w-1/2 text-muted" aria-hidden="true" />
       </span>
     );
   }
@@ -65,7 +91,7 @@ function BadgeImage({ badge }: { badge: BadgeType }) {
       src={url}
       alt=""
       loading="lazy"
-      className="h-9 w-9 shrink-0 object-contain"
+      className={cn('shrink-0 rounded-full object-contain', size)}
       onError={() => setFailed(true)}
     />
   );
@@ -75,20 +101,23 @@ function BadgeImage({ badge }: { badge: BadgeType }) {
  * Icon + full name as one chip. Names sit beside the icon rather than under it, so
  * they show in full without each badge costing a whole block of height.
  */
-function BadgeList({ badges }: { badges: BadgeType[] }) {
+function BadgeList({ badges, density }: { badges: BadgeType[]; density: Density }) {
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
+  const size = DENSITY[density].icon;
   return (
     <ul className="flex flex-wrap gap-2">
       {badges.map((badge) => (
         <li
           key={badge.id}
-          className="flex items-center gap-2 rounded-full bg-white/6 py-1 pl-1 pr-3"
+          className="flex items-center gap-2 rounded-full bg-white/6 p-1 pr-3"
           title={badge.description ?? badge.name}
         >
-          <BadgeImage badge={badge} />
-          <span className="text-xs leading-snug">{badge.name}</span>
+          <BadgeImage badge={badge} size={size} />
+          <span className={cn('leading-snug', density === 'roomy' ? 'text-sm' : 'text-xs')}>
+            {badge.name}
+          </span>
         </li>
       ))}
     </ul>
@@ -99,21 +128,23 @@ function BadgeList({ badges }: { badges: BadgeType[] }) {
 // The five renderers
 // ---------------------------------------------------------------------------
 
-function CompletionTable({ data }: { data: CompletionTableData }) {
+function CompletionTable({ data, density }: { data: CompletionTableData; density: Density }) {
+  // `cellPad`, not `cell`: the row loop below binds `cell` to the completion entry.
+  const { cell: cellPad, text } = DENSITY[density];
   if (data.rows.length === 0) {
     return <EmptyState icon={<Table2 className="h-6 w-6" />} title="No enrolled students yet" />;
   }
   return (
     // Scrolls inside the widget so a wide table never makes the page scroll sideways.
     <div className="h-full overflow-auto">
-      <table className="w-full border-collapse text-sm">
+      <table className={cn('w-full border-collapse', text)}>
         <thead className="sticky top-0 bg-ground-soft/95 backdrop-blur">
           <tr>
-            <th className="p-2 text-left font-medium text-muted">Student</th>
+            <th className={cn('text-left font-medium text-muted', cellPad)}>Student</th>
             {data.courses.map((course) => (
               <th
                 key={course.id}
-                className="min-w-32 p-2 text-left font-medium text-muted"
+                className={cn('min-w-32 text-left font-medium text-muted', cellPad)}
                 title={course.fullname}
               >
                 {course.shortname}
@@ -124,11 +155,11 @@ function CompletionTable({ data }: { data: CompletionTableData }) {
         <tbody>
           {data.rows.map((row) => (
             <tr key={row.user.id} className="border-t border-edge/60">
-              <td className="p-2 whitespace-nowrap">{row.user.fullname}</td>
+              <td className={cn('whitespace-nowrap', cellPad)}>{row.user.fullname}</td>
               {data.courses.map((course) => {
                 const cell = row.cells.find((c) => c.courseId === course.id);
                 return (
-                  <td key={course.id} className="p-2">
+                  <td key={course.id} className={cellPad}>
                     {cell ? (
                       <ProgressBar entry={cell} />
                     ) : (
@@ -163,10 +194,13 @@ const PLACE_STYLES = [
 function BadgeCards({
   data,
   showProgress,
+  density,
 }: {
   data: BadgeCardsData | BadgeListData;
   showProgress: boolean;
+  density: Density;
 }) {
+  const { gap, pad, bar } = DENSITY[density];
   if (data.users.length === 0) {
     return <EmptyState icon={<Award className="h-6 w-6" />} title="Nobody enrolled yet" />;
   }
@@ -174,14 +208,16 @@ function BadgeCards({
   // Rows are pre-sorted by badge count, but only award a trophy to someone who
   // actually holds badges — otherwise an empty course hands out three trophies.
   return (
-    <div className="space-y-3">
+    <div className={gap}>
       {data.users.map((entry, index) => {
         const place = entry.badges.length > 0 ? PLACE_STYLES[index] : undefined;
         return (
           <div
             key={entry.user.id}
             className={cn(
-              'space-y-3 rounded-xl border bg-white/3 p-4',
+              'rounded-xl border bg-white/3',
+              gap,
+              pad,
               place ? place.border : 'border-edge',
             )}
           >
@@ -204,7 +240,7 @@ function BadgeCards({
               ) : (
                 // Full width: the bar is the headline number of this widget.
                 <div className="flex items-center gap-3">
-                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                  <span className={cn('flex-1 overflow-hidden rounded-full bg-white/10', bar)}>
                     <span
                       className={cn('block h-full rounded-full', bandClass(entry.percent))}
                       style={{ width: `${entry.percent}%` }}
@@ -217,8 +253,8 @@ function BadgeCards({
               )
             ) : null}
 
-            <div className="border-t border-edge/60 pt-3">
-              <BadgeList badges={entry.badges} />
+            <div className={cn('border-t border-edge/60', density === 'compact' ? 'pt-1.5' : 'pt-3')}>
+              <BadgeList badges={entry.badges} density={density} />
             </div>
           </div>
         );
@@ -227,12 +263,13 @@ function BadgeCards({
   );
 }
 
-function CourseOverview({ data }: { data: CourseOverviewData }) {
+function CourseOverview({ data, density }: { data: CourseOverviewData; density: Density }) {
   const untracked = data.averagePercent === null;
   return (
     <div className="flex h-full flex-col justify-center gap-3">
       <div>
-        <p className="text-4xl font-semibold tabular-nums">
+        <p className={cn('font-semibold tabular-nums',
+          density === 'compact' ? 'text-3xl' : density === 'roomy' ? 'text-5xl' : 'text-4xl')}>
           {untracked ? 'Not tracked' : `${Math.round(data.averagePercent ?? 0)}%`}
         </p>
         <p className="text-xs text-muted">
@@ -261,7 +298,8 @@ function CourseOverview({ data }: { data: CourseOverviewData }) {
   );
 }
 
-function Leaderboard({ data }: { data: LeaderboardData }) {
+function Leaderboard({ data, density }: { data: LeaderboardData; density: Density }) {
+  const { cell, text } = DENSITY[density];
   if (data.entries.length === 0) {
     return <EmptyState icon={<Trophy className="h-6 w-6" />} title="No badges awarded yet" />;
   }
@@ -271,7 +309,7 @@ function Leaderboard({ data }: { data: LeaderboardData }) {
       {data.entries.map((entry, index) => (
         <li
           key={entry.user.id}
-          className="flex items-center gap-3 rounded-lg px-2 py-1.5 text-sm odd:bg-white/3"
+          className={cn('flex items-center gap-3 rounded-lg odd:bg-white/3', cell, text)}
         >
           <span
             className={cn('w-5 shrink-0 text-center tabular-nums', medal[index] ?? 'text-muted')}
@@ -286,13 +324,13 @@ function Leaderboard({ data }: { data: LeaderboardData }) {
   );
 }
 
-function UserList({ data }: { data: UserListData }) {
+function UserList({ data, density }: { data: UserListData; density: Density }) {
   return (
-    <div className="space-y-4 overflow-auto">
+    <div className={cn('overflow-auto', DENSITY[density].gap)}>
       <p className="text-sm font-medium">{data.user.fullname}</p>
       <div>
         <p className="mb-2 text-xs uppercase tracking-wide text-muted">Badges</p>
-        <BadgeList badges={data.badges} />
+        <BadgeList badges={data.badges} density={density} />
       </div>
       <div>
         <p className="mb-2 text-xs uppercase tracking-wide text-muted">Completion</p>
@@ -453,19 +491,21 @@ export function WidgetBody({
     return <EmptyState title={data.message} />;
   }
 
+  const density = densityOf(widget.config);
+
   switch (data.type) {
     case 'completion_table':
-      return <CompletionTable data={data} />;
+      return <CompletionTable data={data} density={density} />;
     case 'badge_cards':
-      return <BadgeCards data={data} showProgress />;
+      return <BadgeCards data={data} showProgress density={density} />;
     case 'badge_list':
-      return <BadgeCards data={data} showProgress={false} />;
+      return <BadgeCards data={data} showProgress={false} density={density} />;
     case 'course_overview':
-      return <CourseOverview data={data} />;
+      return <CourseOverview data={data} density={density} />;
     case 'leaderboard':
-      return <Leaderboard data={data} />;
+      return <Leaderboard data={data} density={density} />;
     case 'user_list':
-      return <UserList data={data} />;
+      return <UserList data={data} density={density} />;
     default:
       return null;
   }

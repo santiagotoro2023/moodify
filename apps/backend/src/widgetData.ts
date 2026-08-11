@@ -10,7 +10,6 @@ import {
   type WidgetDataError,
   type WidgetType,
 } from '@moodify/shared';
-import { ASSETS_URL_PREFIX } from './config.ts';
 import { sql } from './db.ts';
 
 /**
@@ -140,21 +139,19 @@ function toUser(row: UserRow): MoodleUser {
 }
 
 /**
- * Badge images are downloaded during sync and served by Moodify itself — Moodle's
- * pluginfile.php needs the web service token, so it can never be hotlinked (§9.3).
+ * Badge images are served by Moodify itself — Moodle's pluginfile.php needs the web
+ * service token, so it can never be hotlinked from the frontend (§9.3).
  */
-function badgeImageUrl(cachedPath: string | null): string | null {
-  if (cachedPath === null || cachedPath === '') return null;
-  return `${ASSETS_URL_PREFIX}/${cachedPath.replace(/^\/+/, '')}`;
-}
-
 function toBadge(row: BadgeRow): Badge {
   return {
     id: row.moodle_badge_id,
     name: row.name,
     description: row.description,
     courseId: row.moodle_course_id,
-    imageUrl: badgeImageUrl(row.cached_image_path),
+    // Always the proxy, never the cached path directly: it redirects to the cached
+    // file when there is one and downloads it on the spot when there is not, so a
+    // badge whose image failed during sync heals on first view.
+    imageUrl: `/api/badge-image/${row.moodle_badge_id}`,
   };
 }
 
@@ -302,6 +299,32 @@ async function completionTable(
 // badge_cards
 // ---------------------------------------------------------------------------
 
+type BadgeCard = { user: MoodleUser; badges: Badge[]; percent: number | null };
+
+/**
+ * Orders the badge widgets. Name is always the tie-break so equal counts keep a
+ * stable order, and "no tracked completion" sorts last in both directions — an
+ * absent percentage is not a low one.
+ */
+function sortCards(
+  cards: BadgeCard[],
+  sortBy: 'badges' | 'percent' | 'name',
+  sortDir: 'asc' | 'desc',
+): void {
+  const dir = sortDir === 'desc' ? -1 : 1;
+  cards.sort((a, b) => {
+    const byName = a.user.fullname.localeCompare(b.user.fullname);
+    if (sortBy === 'name') return dir * (byName !== 0 ? byName : a.user.id - b.user.id);
+    if (sortBy === 'badges') {
+      return dir * (a.badges.length - b.badges.length) || byName;
+    }
+    if (a.percent === null && b.percent === null) return byName;
+    if (a.percent === null) return 1;
+    if (b.percent === null) return -1;
+    return dir * (a.percent - b.percent) || byName;
+  });
+}
+
 async function badgeCards(
   config: WidgetConfig['badge_cards'],
   type: 'badge_cards' | 'badge_list' = 'badge_cards',
@@ -376,14 +399,12 @@ async function badgeCards(
   }
 
   // Users with no badges are kept: the card renders an empty state.
-  // Ordered by badge count so the UI can decorate the top three placings, with
-  // name as the tie-break so equal counts stay in a stable order.
   const cards = users.map((user) => ({
     user,
     badges: byUser.get(user.id) ?? [],
     percent: percentByUser.get(user.id) ?? null,
   }));
-  cards.sort((a, b) => b.badges.length - a.badges.length || a.user.fullname.localeCompare(b.user.fullname));
+  sortCards(cards, config.sortBy, config.sortDir);
 
   return { type, users: cards };
 }
@@ -466,7 +487,8 @@ async function leaderboard(
            and ${studentFilter('$1')}
            and ${excludeFilter('$3')}
       )
-      order by badge_count desc, u.fullname asc, u.moodle_user_id asc`,
+      order by badge_count ${config.sortDir === 'asc' ? 'asc' : 'desc'},
+               u.fullname asc, u.moodle_user_id asc`,
     [config.includeStaff, scopedCourseId, config.excludeUserIds],
   );
 
@@ -522,20 +544,29 @@ async function userList(config: WidgetConfig['user_list']): Promise<WidgetData |
     [user.id, scopedCourseId],
   );
 
-  return {
-    type: 'user_list',
-    user,
-    badges: badgeRows.map(toBadge),
-    completion: courseRows.map((row) => ({
-      course: toCourse(row),
-      entry: {
-        courseId: row.moodle_course_id,
-        activitiesTotal: row.activities_total ?? 0,
-        activitiesCompleted: row.activities_completed ?? 0,
-        percent: row.percent_complete,
-      },
-    })),
-  };
+  const completion = courseRows.map((row) => ({
+    course: toCourse(row),
+    entry: {
+      courseId: row.moodle_course_id,
+      activitiesTotal: row.activities_total ?? 0,
+      activitiesCompleted: row.activities_completed ?? 0,
+      percent: row.percent_complete,
+    },
+  }));
+
+  // Course name comes back ordered from SQL; percent needs the same untracked-last
+  // rule the other widgets use, so both directions are applied here.
+  const dir = config.sortDir === 'desc' ? -1 : 1;
+  completion.sort((a, b) => {
+    const byName = a.course.fullname.localeCompare(b.course.fullname);
+    if (config.sortBy === 'course') return dir * (byName !== 0 ? byName : a.course.id - b.course.id);
+    if (a.entry.percent === null && b.entry.percent === null) return byName;
+    if (a.entry.percent === null) return 1;
+    if (b.entry.percent === null) return -1;
+    return dir * (a.entry.percent - b.entry.percent) || byName;
+  });
+
+  return { type: 'user_list', user, badges: badgeRows.map(toBadge), completion };
 }
 
 // ---------------------------------------------------------------------------

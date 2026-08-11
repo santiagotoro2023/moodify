@@ -36,12 +36,23 @@ const courseScope = {
 /** Students to leave out of a widget, e.g. a test account holding every badge. */
 const excludeUserIds = z.array(userId).max(500).default([]);
 
+/**
+ * Row height. Every widget carries it so a dashboard meant for a wall display can be
+ * tightened without shrinking the one on someone's laptop.
+ */
+export const DENSITIES = ['compact', 'normal', 'roomy'] as const;
+export type Density = (typeof DENSITIES)[number];
+const density = z.enum(DENSITIES).default('normal');
+
+const sortDir = z.enum(['asc', 'desc']).default('asc');
+
 export const completionTableConfig = z.object({
   ...courseScope,
   sortBy: z.enum(['name', 'course', 'percent']).default('name'),
-  sortDir: z.enum(['asc', 'desc']).default('asc'),
+  sortDir,
   includeStaff: z.boolean().default(false),
   excludeUserIds,
+  density,
 });
 
 export const badgeCardsConfig = z.object({
@@ -49,8 +60,12 @@ export const badgeCardsConfig = z.object({
   scope: z.enum(['user', 'course']).default('course'),
   userId: userId.nullable().default(null),
   courseId: courseId.nullable().default(null),
+  sortBy: z.enum(['badges', 'percent', 'name']).default('badges'),
+  // Badge counts and percentages read best highest-first; names read best A-Z.
+  sortDir: z.enum(['asc', 'desc']).default('desc'),
   includeStaff: z.boolean().default(false),
   excludeUserIds,
+  density,
 });
 
 /** Same scoping as badge_cards; the widget just omits the completion bar. */
@@ -60,18 +75,26 @@ export const courseOverviewConfig = z.object({
   courseId: courseId.nullable().default(null),
   includeStaff: z.boolean().default(false),
   excludeUserIds,
+  density,
 });
 
 export const leaderboardConfig = z.object({
   ...courseScope,
   limit: z.number().int().min(1).max(100).default(10),
+  /** 'desc' is the leaderboard proper; 'asc' surfaces whoever needs a nudge. */
+  sortDir: z.enum(['asc', 'desc']).default('desc'),
   includeStaff: z.boolean().default(false),
   excludeUserIds,
+  density,
 });
 
 export const userListConfig = z.object({
   userId: userId.nullable().default(null),
   ...courseScope,
+  /** Orders the course-completion list under the badges. */
+  sortBy: z.enum(['course', 'percent']).default('course'),
+  sortDir,
+  density,
 });
 
 export const WIDGET_CONFIG_SCHEMAS = {

@@ -157,6 +157,61 @@ export function WidgetConfigForm({
     </div>
   );
 
+  /** Sort control shared by the widgets that render a list of rows. */
+  const sortPicker = (
+    options: { value: string; label: string }[],
+    fallback: string,
+    dirFallback: 'asc' | 'desc',
+  ) => (
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <Label htmlFor={id('sortBy')}>Sort by</Label>
+        <Select
+          id={id('sortBy')}
+          value={String(config.sortBy ?? fallback)}
+          onChange={(e) => set('sortBy', e.target.value)}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      {dirPicker(dirFallback)}
+    </div>
+  );
+
+  const dirPicker = (fallback: 'asc' | 'desc') => (
+    <div>
+      <Label htmlFor={id('sortDir')}>Direction</Label>
+      <Select
+        id={id('sortDir')}
+        value={String(config.sortDir ?? fallback)}
+        onChange={(e) => set('sortDir', e.target.value)}
+      >
+        <option value="asc">Ascending</option>
+        <option value="desc">Descending</option>
+      </Select>
+    </div>
+  );
+
+  /** Row height. Offered on every widget type (see WIDGET_CONFIG_SCHEMAS). */
+  const densityPicker = () => (
+    <div>
+      <Label htmlFor={id('density')}>Row size</Label>
+      <Select
+        id={id('density')}
+        value={String(config.density ?? 'normal')}
+        onChange={(e) => set('density', e.target.value)}
+      >
+        <option value="compact">Compact — fits the most rows</option>
+        <option value="normal">Normal</option>
+        <option value="roomy">Roomy — easiest to read from a distance</option>
+      </Select>
+    </div>
+  );
+
   const staffToggle = () => (
     <div className="flex items-center justify-between gap-4">
       <Label htmlFor={id('staff')} className="mb-0">
@@ -223,6 +278,17 @@ export function WidgetConfigForm({
             </Select>
           </div>
           {config.scope === 'user' ? userPicker() : coursePicker()}
+          {config.scope !== 'user'
+            ? sortPicker(
+                [
+                  { value: 'badges', label: 'Badge count' },
+                  { value: 'percent', label: 'Completion' },
+                  { value: 'name', label: 'Name' },
+                ],
+                'badges',
+                'desc',
+              )
+            : null}
           {config.scope !== 'user' ? staffToggle() : null}
           {config.scope !== 'user' ? excludePicker() : null}
         </>
@@ -251,6 +317,7 @@ export function WidgetConfigForm({
               onChange={(e) => set('limit', Number(e.target.value))}
             />
           </div>
+          {dirPicker('desc')}
           {staffToggle()}
           {excludePicker()}
         </>
@@ -261,8 +328,18 @@ export function WidgetConfigForm({
           {userPicker()}
           {scopePicker()}
           {scope === 'course' ? coursePicker() : null}
+          {sortPicker(
+            [
+              { value: 'course', label: 'Course name' },
+              { value: 'percent', label: 'Completion' },
+            ],
+            'course',
+            'asc',
+          )}
         </>
       ) : null}
+
+      {densityPicker()}
 
       {error ? <ErrorNote message={error} /> : null}
 
