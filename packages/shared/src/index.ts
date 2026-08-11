@@ -46,6 +46,14 @@ const density = z.enum(DENSITIES).default('normal');
 
 const sortDir = z.enum(['asc', 'desc']).default('asc');
 
+/**
+ * Badge icon size, on the widgets that render badges. Deliberately independent of
+ * row size: a wall display often wants tight rows with big, readable icons.
+ */
+export const BADGE_SIZES = ['small', 'medium', 'large'] as const;
+export type BadgeSize = (typeof BADGE_SIZES)[number];
+const badgeSize = z.enum(BADGE_SIZES).default('small');
+
 export const completionTableConfig = z.object({
   ...courseScope,
   sortBy: z.enum(['name', 'course', 'percent']).default('name'),
@@ -66,6 +74,7 @@ export const badgeCardsConfig = z.object({
   includeStaff: z.boolean().default(false),
   excludeUserIds,
   density,
+  badgeSize,
 });
 
 /** Same scoping as badge_cards; the widget just omits the completion bar. */
@@ -95,6 +104,7 @@ export const userListConfig = z.object({
   sortBy: z.enum(['course', 'percent']).default('course'),
   sortDir,
   density,
+  badgeSize,
 });
 
 export const WIDGET_CONFIG_SCHEMAS = {

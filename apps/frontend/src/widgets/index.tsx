@@ -13,7 +13,7 @@ import type {
   WidgetDataError,
 } from '@moodify/shared';
 import { Award, BookOpen, Medal, Table2, Trophy, User } from 'lucide-react';
-import type { Density } from '@moodify/shared';
+import type { BadgeSize, Density } from '@moodify/shared';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, EmptyState, ErrorNote, Spinner } from '@/ui';
 
@@ -36,10 +36,22 @@ const DENSITY: Record<Density, {
   roomy: { gap: 'space-y-4', pad: 'p-5', cell: 'px-3 py-3.5', text: 'text-base', icon: 'h-12 w-12', bar: 'h-2.5' },
 };
 
-/** Widget configs are stored as opaque JSON; only the density field matters here. */
+/** Badge icon size, set per widget and independent of row size. */
+const BADGE_SIZE: Record<BadgeSize, { icon: string; text: string; pad: string }> = {
+  small: { icon: 'h-9 w-9', text: 'text-xs', pad: 'p-1 pr-3' },
+  medium: { icon: 'h-12 w-12', text: 'text-sm', pad: 'p-1.5 pr-3.5' },
+  large: { icon: 'h-16 w-16', text: 'text-base', pad: 'p-2 pr-4' },
+};
+
+/** Widget configs are stored as opaque JSON; only the display fields matter here. */
 function densityOf(config: unknown): Density {
   const value = (config as { density?: unknown } | null)?.density;
   return value === 'compact' || value === 'roomy' ? value : 'normal';
+}
+
+function badgeSizeOf(config: unknown): BadgeSize {
+  const value = (config as { badgeSize?: unknown } | null)?.badgeSize;
+  return value === 'medium' || value === 'large' ? value : 'small';
 }
 
 /** Colour band for a completion bar. Untracked never reaches here. */
@@ -101,23 +113,21 @@ function BadgeImage({ badge, size }: { badge: BadgeType; size: string }) {
  * Icon + full name as one chip. Names sit beside the icon rather than under it, so
  * they show in full without each badge costing a whole block of height.
  */
-function BadgeList({ badges, density }: { badges: BadgeType[]; density: Density }) {
+function BadgeList({ badges, badgeSize }: { badges: BadgeType[]; badgeSize: BadgeSize }) {
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
-  const size = DENSITY[density].icon;
+  const { icon, text, pad } = BADGE_SIZE[badgeSize];
   return (
     <ul className="flex flex-wrap gap-2">
       {badges.map((badge) => (
         <li
           key={badge.id}
-          className="flex items-center gap-2 rounded-full bg-white/6 p-1 pr-3"
+          className={cn('flex items-center gap-2 rounded-full bg-white/6', pad)}
           title={badge.description ?? badge.name}
         >
-          <BadgeImage badge={badge} size={size} />
-          <span className={cn('leading-snug', density === 'roomy' ? 'text-sm' : 'text-xs')}>
-            {badge.name}
-          </span>
+          <BadgeImage badge={badge} size={icon} />
+          <span className={cn('leading-snug', text)}>{badge.name}</span>
         </li>
       ))}
     </ul>
@@ -195,10 +205,12 @@ function BadgeCards({
   data,
   showProgress,
   density,
+  badgeSize,
 }: {
   data: BadgeCardsData | BadgeListData;
   showProgress: boolean;
   density: Density;
+  badgeSize: BadgeSize;
 }) {
   const { gap, pad, bar } = DENSITY[density];
   if (data.users.length === 0) {
@@ -254,7 +266,7 @@ function BadgeCards({
             ) : null}
 
             <div className={cn('border-t border-edge/60', density === 'compact' ? 'pt-1.5' : 'pt-3')}>
-              <BadgeList badges={entry.badges} density={density} />
+              <BadgeList badges={entry.badges} badgeSize={badgeSize} />
             </div>
           </div>
         );
@@ -324,13 +336,21 @@ function Leaderboard({ data, density }: { data: LeaderboardData; density: Densit
   );
 }
 
-function UserList({ data, density }: { data: UserListData; density: Density }) {
+function UserList({
+  data,
+  density,
+  badgeSize,
+}: {
+  data: UserListData;
+  density: Density;
+  badgeSize: BadgeSize;
+}) {
   return (
     <div className={cn('overflow-auto', DENSITY[density].gap)}>
       <p className="text-sm font-medium">{data.user.fullname}</p>
       <div>
         <p className="mb-2 text-xs uppercase tracking-wide text-muted">Badges</p>
-        <BadgeList badges={data.badges} density={density} />
+        <BadgeList badges={data.badges} badgeSize={badgeSize} />
       </div>
       <div>
         <p className="mb-2 text-xs uppercase tracking-wide text-muted">Completion</p>
@@ -492,20 +512,21 @@ export function WidgetBody({
   }
 
   const density = densityOf(widget.config);
+  const badgeSize = badgeSizeOf(widget.config);
 
   switch (data.type) {
     case 'completion_table':
       return <CompletionTable data={data} density={density} />;
     case 'badge_cards':
-      return <BadgeCards data={data} showProgress density={density} />;
+      return <BadgeCards data={data} showProgress density={density} badgeSize={badgeSize} />;
     case 'badge_list':
-      return <BadgeCards data={data} showProgress={false} density={density} />;
+      return <BadgeCards data={data} showProgress={false} density={density} badgeSize={badgeSize} />;
     case 'course_overview':
       return <CourseOverview data={data} density={density} />;
     case 'leaderboard':
       return <Leaderboard data={data} density={density} />;
     case 'user_list':
-      return <UserList data={data} density={density} />;
+      return <UserList data={data} density={density} badgeSize={badgeSize} />;
     default:
       return null;
   }

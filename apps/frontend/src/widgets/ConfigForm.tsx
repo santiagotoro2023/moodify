@@ -196,6 +196,22 @@ export function WidgetConfigForm({
     </div>
   );
 
+  /** Badge icon size. Only on the widgets that draw badges. */
+  const badgeSizePicker = () => (
+    <div>
+      <Label htmlFor={id('badgeSize')}>Badge size</Label>
+      <Select
+        id={id('badgeSize')}
+        value={String(config.badgeSize ?? 'small')}
+        onChange={(e) => set('badgeSize', e.target.value)}
+      >
+        <option value="small">Small</option>
+        <option value="medium">Medium</option>
+        <option value="large">Large</option>
+      </Select>
+    </div>
+  );
+
   /** Row height. Offered on every widget type (see WIDGET_CONFIG_SCHEMAS). */
   const densityPicker = () => (
     <div>
@@ -340,6 +356,9 @@ export function WidgetConfigForm({
       ) : null}
 
       {densityPicker()}
+      {widget.type === 'badge_cards' || widget.type === 'badge_list' || widget.type === 'user_list'
+        ? badgeSizePicker()
+        : null}
 
       {error ? <ErrorNote message={error} /> : null}
 
