@@ -329,8 +329,13 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
               id: z.number().int().positive(),
               x: z.number().int().min(0),
               y: z.number().int().min(0),
-              w: z.number().int().min(1),
-              h: z.number().int().min(1),
+              // Minimum 2, matching the grid's own minW/minH. react-grid-layout falls
+              // back to a 1×1 item for any child it cannot match to a layout entry, and
+              // saving that turns a dashboard into a column of grey slivers that the
+              // frontend alone cannot undo. Rejecting it here makes that loud instead:
+              // the client shows the error above the grid and the stored layout survives.
+              w: z.number().int().min(2),
+              h: z.number().int().min(2),
             }),
           )
           .max(200),

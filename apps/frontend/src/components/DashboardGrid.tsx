@@ -253,11 +253,11 @@ export function DashboardGrid({
         // And with no gravity to resolve overlaps, a drag must not shove its neighbour
         // out of the way either — an occupied cell simply refuses the drop.
         preventCollision
-        // Render only once the container has been measured. Without this the first paint
-        // uses WidthProvider's hardcoded 1280px, so on a wider screen the grid draws
-        // narrower than the page and every drag distance is computed against the wrong
-        // column width.
-        measureBeforeMount
+        // NOT measureBeforeMount. It was tried, to avoid WidthProvider's hardcoded
+        // 1280px first paint, and it made every existing widget render as a 1×1 box —
+        // react-grid-layout's fallback for a child it cannot match to a layout entry,
+        // which stacks them into a thin grey column. The 1280px flash is cosmetic and
+        // self-corrects on the first measurement; this was not.
         onDragStop={persist}
         onResizeStop={persist}
       >
