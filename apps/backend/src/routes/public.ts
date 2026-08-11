@@ -1,11 +1,11 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Dashboard } from '@moodify/shared';
 import { z } from 'zod';
 import { anonymizeWidgetData, globalStudentLabels } from '../anonymize.ts';
 import { requireAdmin } from '../auth.ts';
 import { ASSETS_URL_PREFIX } from '../config.ts';
 import { sql } from '../db.ts';
-import { fetchAndStoreBadgeImage, loadConnection } from '../sync.ts';
+import { fetchAndStoreAvatar, fetchAndStoreBadgeImage, loadConnection } from '../sync.ts';
 import { UploadError, assetUrl, deleteUpload, saveImageUpload } from '../uploads.ts';
 import { resolveWidgetData } from '../widgetData.ts';
 import { loadWidgets } from './dashboards.ts';
@@ -95,6 +95,60 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     return reply.redirect(`${ASSETS_URL_PREFIX}/${path.replace(/^\/+/, '')}`, 302);
   });
 
+  /**
+   * Profile pictures. Unlike badge icons these ARE personal data, so there is no
+   * open route for them: an admin session, or a share token for a dashboard that is
+   * not anonymised. Otherwise one leaked link would become a directory of faces.
+   *
+   * Self-heals the same way badge images do — a picture uploaded to Moodle after the
+   * last full discovery is downloaded on first view.
+   */
+  async function sendAvatar(request: FastifyRequest, reply: FastifyReply, userId: number) {
+    const { rows } = await sql<{ cached: string | null; url: string | null }>(
+      `select avatar_image_path as cached, avatar_source_url as url
+         from moodle_users where moodle_user_id = $1`,
+      [userId],
+    );
+    const row = rows[0];
+    if (row === undefined) return reply.code(404).send({ error: 'No such user' });
+
+    if (row.cached === null && row.url !== null) {
+      const conn = await loadConnection().catch(() => null);
+      if (conn !== null) {
+        try {
+          await fetchAndStoreAvatar(conn, userId, row.url);
+        } catch (err) {
+          request.log.error({ userId, err }, 'on-demand profile picture download failed');
+          const error = err instanceof Error ? err.message : 'Profile picture could not be fetched';
+          return reply.code(502).send({ error });
+        }
+      }
+    }
+
+    const { rows: after } = await sql<{ cached: string | null }>(
+      'select avatar_image_path as cached from moodle_users where moodle_user_id = $1',
+      [userId],
+    );
+    const path = after[0]?.cached ?? null;
+    if (path === null) return reply.code(404).send({ error: 'No picture for this user' });
+    return reply.redirect(`${ASSETS_URL_PREFIX}/${path.replace(/^\/+/, '')}`, 302);
+  }
+
+  const userIdParam = z.object({ userId: z.coerce.number().int().positive() });
+
+  app.get('/api/user-image/:userId', { preHandler: requireAdmin }, async (request, reply) =>
+    sendAvatar(request, reply, userIdParam.parse(request.params).userId),
+  );
+
+  app.get('/api/public/:token/user-image/:userId', async (request, reply) => {
+    const { token, userId } = tokenParams.merge(userIdParam).parse(request.params);
+    const row = await dashboardForToken(token);
+    // An anonymised dashboard must not serve faces even to someone holding its token —
+    // the payload already nulls avatarUrl, and this is the half that cannot be guessed past.
+    if (!row || row.anonymize_on_public) return reply.code(404).send({ error: 'Not found' });
+    return sendAvatar(request, reply, userId);
+  });
+
   app.get('/api/public/:token', async (request, reply) => {
     const { token } = tokenParams.parse(request.params);
     reply.header('cache-control', 'no-store');
@@ -135,11 +189,15 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     const widget = rows[0];
     if (!widget) return reply.code(404).send({ error: 'Widget not found' });
 
-    const data = await resolveWidgetData({
-      id: widget.id,
-      type: widget.type as Parameters<typeof resolveWidgetData>[0]['type'],
-      config: widget.config,
-    });
+    const data = await resolveWidgetData(
+      {
+        id: widget.id,
+        type: widget.type as Parameters<typeof resolveWidgetData>[0]['type'],
+        config: widget.config,
+      },
+      // Avatars on a public page are served through the token, never the admin route.
+      `/api/public/${token}/user-image`,
+    );
 
     if (!row.anonymize_on_public || data.type === 'error') return data;
 

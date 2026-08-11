@@ -32,7 +32,7 @@ import { decryptSecret } from './crypto.ts';
 import { sql } from './db.ts';
 import {
   computeCompletion,
-  downloadBadgeImage,
+  downloadImage,
   getActivitiesCompletion,
   getCourses,
   getEnrolledUsers,
@@ -198,17 +198,36 @@ async function upsertCourse(course: {
   );
 }
 
-async function upsertUser(user: { id: number; fullname: string; email: string | null }): Promise<void> {
+/** Upserts the user and reports whether their avatar still needs downloading. */
+async function upsertUser(user: {
+  id: number;
+  fullname: string;
+  email: string | null;
+  profileImageUrl?: string | null;
+}): Promise<{ avatarUrl: string | null; cached: string | null }> {
   // Moodle hides email in some course contexts, so a null must not erase a known address.
-  await sql(
-    `insert into moodle_users (moodle_user_id, fullname, email, last_seen_at)
-     values ($1, $2, $3, now())
+  // Same for the avatar URL, which only the enrolled-users call carries.
+  const { rows } = await sql<{ avatar_source_url: string | null; avatar_image_path: string | null }>(
+    `insert into moodle_users (moodle_user_id, fullname, email, avatar_source_url, last_seen_at)
+     values ($1, $2, $3, $4, now())
      on conflict (moodle_user_id) do update
-        set fullname     = excluded.fullname,
-            email        = coalesce(excluded.email, moodle_users.email),
-            last_seen_at = now()`,
-    [user.id, user.fullname, user.email],
+        set fullname          = excluded.fullname,
+            email             = coalesce(excluded.email, moodle_users.email),
+            avatar_source_url = coalesce(excluded.avatar_source_url, moodle_users.avatar_source_url),
+            -- Moodle bumps ?rev= in the URL when someone changes their picture, so a
+            -- changed URL means the cached file is stale: drop it and it re-downloads.
+            avatar_image_path = case
+              when excluded.avatar_source_url is not null
+               and excluded.avatar_source_url is distinct from moodle_users.avatar_source_url
+              then null else moodle_users.avatar_image_path end,
+            last_seen_at      = now()
+     returning avatar_source_url, avatar_image_path`,
+    [user.id, user.fullname, user.email, user.profileImageUrl ?? null],
   );
+  return {
+    avatarUrl: rows[0]?.avatar_source_url ?? null,
+    cached: rows[0]?.avatar_image_path ?? null,
+  };
 }
 
 async function upsertEnrollment(courseId: number, userId: number, roles: string[]): Promise<void> {
@@ -300,6 +319,8 @@ interface RunContext {
   badgeIds: Set<number>;
   /** Badge ids whose image download was already started this run (dedupes shared badges). */
   imagesHandled: Set<number>;
+  /** Same, for profile pictures (dedupes a student enrolled in several courses). */
+  avatarsHandled: Set<number>;
   attempted: number;
   failures: number;
   firstError: string | null;
@@ -331,7 +352,7 @@ export async function fetchAndStoreBadgeImage(
   badgeId: number,
   imageUrl: string,
 ): Promise<void> {
-  const { buffer, contentType } = await downloadBadgeImage(conn, imageUrl);
+  const { buffer, contentType } = await downloadImage(conn, imageUrl);
   const filename = `${badgeId}.${extensionFor(contentType)}`;
   const directory = join(ASSETS_DIR, 'badges');
   await mkdir(directory, { recursive: true });
@@ -340,6 +361,23 @@ export async function fetchAndStoreBadgeImage(
   await sql('update badges set cached_image_path = $2 where moodle_badge_id = $1', [
     badgeId,
     `badges/${filename}`,
+  ]);
+}
+
+/** Same deal for profile pictures. Throws — callers decide how loud to be. */
+export async function fetchAndStoreAvatar(
+  conn: MoodleConnection,
+  userId: number,
+  imageUrl: string,
+): Promise<void> {
+  const { buffer, contentType } = await downloadImage(conn, imageUrl);
+  const filename = `${userId}.${extensionFor(contentType)}`;
+  const directory = join(ASSETS_DIR, 'avatars');
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, filename), buffer);
+  await sql('update moodle_users set avatar_image_path = $2 where moodle_user_id = $1', [
+    userId,
+    `avatars/${filename}`,
   ]);
 }
 
@@ -353,6 +391,15 @@ async function cacheBadgeImage(ctx: RunContext, badgeId: number, imageUrl: strin
       { badgeId, imageUrl, err: describeError(err) },
       'badge image download failed — widgets will show a placeholder icon',
     );
+  }
+}
+
+async function cacheAvatar(ctx: RunContext, userId: number, imageUrl: string): Promise<void> {
+  try {
+    await fetchAndStoreAvatar(ctx.conn, userId, imageUrl);
+  } catch (err) {
+    // Cosmetic, exactly like a badge image: the chart falls back to initials.
+    ctx.logger.warn({ userId, err: describeError(err) }, 'profile picture download failed');
   }
 }
 
@@ -480,7 +527,12 @@ async function discoverEntities(ctx: RunContext): Promise<SyncTask[]> {
     try {
       const users = await getEnrolledUsers(ctx.conn, course.id);
       for (const user of users) {
-        await upsertUser(user);
+        const avatar = await upsertUser(user);
+        // Once per run, however many courses the same student turns up in.
+        if (avatar.cached === null && avatar.avatarUrl !== null && !ctx.avatarsHandled.has(user.id)) {
+          ctx.avatarsHandled.add(user.id);
+          await cacheAvatar(ctx, user.id, avatar.avatarUrl);
+        }
         await upsertEnrollment(course.id, user.id, user.roles);
         ctx.userIds.add(user.id);
         pairs.push({ kind: 'pair', courseId: course.id, userId: user.id });
@@ -516,6 +568,76 @@ async function loadKnownTasks(ctx: RunContext): Promise<SyncTask[]> {
 }
 
 // ---------------------------------------------------------------------------
+// History samples, for the progress_chart widget. Everything else in Moodify is a
+// live snapshot; this is the one table that keeps a trail.
+// ---------------------------------------------------------------------------
+
+/** How often a sample is written, regardless of how often the poll runs. */
+const SAMPLE_INTERVAL_MS = 15 * 60 * 1000;
+/** How far back the chart can ever reach. Older samples are deleted, so the window
+ *  rolls forward instead of the chart going blank on the seventh day. */
+const HISTORY_RETENTION_DAYS = 7;
+
+/**
+ * Appends one sample of every student's badge count and completion, if the last one is
+ * old enough, and prunes anything past the retention window.
+ *
+ * Sampling is time-gated off the table rather than a module variable so that restarting
+ * the container does not restart the cadence — 60s polls would otherwise write a sample
+ * every minute for as long as the process happens to live.
+ *
+ * The counts are computed in SQL to match the widgets exactly: a course-scoped row counts
+ * that course's badges plus site-wide ones (as badge_cards does), and the all-courses row
+ * counts every badge held and averages completion over tracked courses only (§9.2).
+ */
+async function recordHistorySample(logger: FastifyBaseLogger): Promise<void> {
+  const { rows } = await sql<{ due: boolean }>(
+    // ::text on the parameter is load-bearing: without it `$1 || ' milliseconds'` is two
+    // unknowns and Postgres rejects the operator as ambiguous.
+    `select coalesce(max(recorded_at) < now() - ($1::text || ' milliseconds')::interval, true) as due
+       from metric_history`,
+    [SAMPLE_INTERVAL_MS],
+  );
+  if (rows[0]?.due !== true) return;
+
+  // One timestamp for the whole sample, so every student's point lines up on the axis.
+  const { rows: stamp } = await sql<{ now: Date }>('select now() as now');
+  const at = stamp[0]?.now ?? new Date();
+
+  await sql(
+    `insert into metric_history (moodle_user_id, moodle_course_id, recorded_at, percent_complete, badge_count)
+     select e.moodle_user_id, e.moodle_course_id, $1, cs.percent_complete,
+            (select count(*)
+               from badge_issued bi
+               join badges b on b.moodle_badge_id = bi.moodle_badge_id
+              where bi.moodle_user_id = e.moodle_user_id
+                and (b.moodle_course_id = e.moodle_course_id or b.moodle_course_id is null))::int
+       from enrollments e
+       left join completion_snapshot cs
+         on cs.moodle_course_id = e.moodle_course_id
+        and cs.moodle_user_id = e.moodle_user_id`,
+    [at],
+  );
+
+  await sql(
+    `insert into metric_history (moodle_user_id, moodle_course_id, recorded_at, percent_complete, badge_count)
+     select u.moodle_user_id, null, $1,
+            (select avg(cs.percent_complete)
+               from completion_snapshot cs
+              where cs.moodle_user_id = u.moodle_user_id and cs.percent_complete is not null),
+            (select count(*) from badge_issued bi where bi.moodle_user_id = u.moodle_user_id)::int
+       from moodle_users u`,
+    [at],
+  );
+
+  const pruned = await sql(
+    `delete from metric_history where recorded_at < now() - ($1::text || ' days')::interval`,
+    [HISTORY_RETENTION_DAYS],
+  );
+  logger.info({ prunedRows: pruned.rowCount ?? 0 }, 'history sample recorded');
+}
+
+// ---------------------------------------------------------------------------
 // Run driver — the single place that catches everything.
 // ---------------------------------------------------------------------------
 
@@ -540,6 +662,7 @@ async function executeRun(logger: FastifyBaseLogger, mode: SyncMode): Promise<vo
       userIds: new Set<number>(),
       badgeIds: new Set<number>(),
       imagesHandled: new Set<number>(),
+      avatarsHandled: new Set<number>(),
       attempted: 0,
       failures: 0,
       firstError: null,
@@ -559,6 +682,14 @@ async function executeRun(logger: FastifyBaseLogger, mode: SyncMode): Promise<vo
     const tasks = mode === 'full' ? await discoverEntities(ctx) : await loadKnownTasks(ctx);
     await processTasks(ctx, tasks);
     publishCounters(ctx, true);
+
+    // After the snapshot is up to date, never before. A failure here is not a sync
+    // failure: the chart losing a point must not raise the connection banner.
+    try {
+      await recordHistorySample(logger);
+    } catch (err) {
+      logger.warn({ err: describeError(err) }, 'history sample failed');
+    }
 
     const durationMs = Date.now() - started;
     progress.phase = null;

@@ -563,6 +563,8 @@ export interface EnrolledUser {
   fullname: string;
   email: string | null;
   roles: string[];
+  /** pluginfile.php URL of the profile picture, or null when Moodle hides it. */
+  profileImageUrl: string | null;
 }
 
 /** core_enrol_get_enrolled_users. Email is often hidden by Moodle policy → null. */
@@ -582,11 +584,16 @@ export async function getEnrolledUsers(
       const shortname = readString(role, 'shortname');
       if (shortname !== null && shortname !== '') roles.push(shortname);
     }
+    // Moodle always sends a profileimageurl; for a user who never uploaded one it points
+    // at the theme's generic silhouette (theme/image.php), not pluginfile.php. Caching
+    // that would replace "no picture" with a grey stranger, so only real uploads count.
+    const picture = readString(entry, 'profileimageurl');
     users.push({
       id,
       fullname: readString(entry, 'fullname') ?? `User ${id}`,
       email: email !== null && email.trim() !== '' ? email : null,
       roles,
+      profileImageUrl: picture !== null && picture.includes('pluginfile.php') ? picture : null,
     });
   }
   return users;
@@ -685,11 +692,12 @@ function withTokenAuth(fileUrl: string, token: string): string {
 }
 
 /**
- * Badge images live behind pluginfile.php, which needs authentication — the frontend must
- * never hotlink Moodle (§9.3). Fetch once with a token query param, cache locally.
+ * Badge icons and profile pictures both live behind pluginfile.php, which needs
+ * authentication — the frontend must never hotlink Moodle (§9.3). Fetch once with a
+ * token query param, cache locally.
  */
 /**
- * Badge image URLs end in a size suffix (`/f1`, `/f2`, `/f3`). Which sizes exist depends
+ * Both kinds of URL end in a size suffix (`/f1`, `/f2`, `/f3`). Which sizes exist depends
  * on the Moodle version — the exporter can hand back an `f3` that badges_pluginfile()
  * then refuses — so a failed download is retried against the other sizes before giving up.
  */
@@ -722,7 +730,7 @@ function refusalError(body: string, contentType: string, token: string): MoodleE
   const haystack = `${errorcode ?? ''} ${message ?? ''} ${payload === null ? body : ''}`.toLowerCase();
   if (haystack.includes('enabledirectdownload') || haystack.includes('file downloading')) {
     return new MoodleError(
-      `Moodle refused to serve badge images: this web service is not allowed to download files. ${ENABLE_DOWNLOAD_HELP}`,
+      `Moodle refused to serve images: this web service is not allowed to download files. ${ENABLE_DOWNLOAD_HELP}`,
       'enabledirectdownload',
       'pluginfile.php',
     );
@@ -745,7 +753,7 @@ function refusalError(body: string, contentType: string, token: string): MoodleE
   );
 }
 
-export async function downloadBadgeImage(
+export async function downloadImage(
   conn: MoodleConnection,
   imageUrl: string,
 ): Promise<{ buffer: Buffer; contentType: string }> {
@@ -753,7 +761,7 @@ export async function downloadBadgeImage(
   let lastError: unknown;
   for (const candidate of [first ?? imageUrl, ...rest]) {
     try {
-      return await fetchBadgeImage(conn, candidate);
+      return await fetchOneImage(conn, candidate);
     } catch (err) {
       lastError = err;
     }
@@ -761,7 +769,7 @@ export async function downloadBadgeImage(
   throw lastError;
 }
 
-async function fetchBadgeImage(
+async function fetchOneImage(
   conn: MoodleConnection,
   imageUrl: string,
 ): Promise<{ buffer: Buffer; contentType: string }> {
@@ -780,7 +788,7 @@ async function fetchBadgeImage(
 
   if (!response.ok) {
     throw new MoodleError(
-      `Downloading a badge image failed with HTTP ${response.status}.`,
+      `Downloading an image from Moodle failed with HTTP ${response.status}.`,
       `http_${response.status}`,
       'pluginfile.php',
     );
@@ -800,7 +808,7 @@ async function fetchBadgeImage(
   const declared = Number(response.headers.get('content-length') ?? '');
   if (Number.isFinite(declared) && declared > MAX_BADGE_IMAGE_BYTES) {
     throw new MoodleError(
-      `Badge image is larger than ${MAX_BADGE_IMAGE_BYTES / 1024 / 1024} MB; skipping it.`,
+      `Image is larger than ${MAX_BADGE_IMAGE_BYTES / 1024 / 1024} MB; skipping it.`,
       'toolarge',
       'pluginfile.php',
     );
@@ -816,7 +824,7 @@ async function fetchBadgeImage(
     }
     if (bytes.byteLength > MAX_BADGE_IMAGE_BYTES) {
       throw new MoodleError(
-        `Badge image is larger than ${MAX_BADGE_IMAGE_BYTES / 1024 / 1024} MB; skipping it.`,
+        `Image is larger than ${MAX_BADGE_IMAGE_BYTES / 1024 / 1024} MB; skipping it.`,
         'toolarge',
         'pluginfile.php',
       );
@@ -836,7 +844,7 @@ async function fetchBadgeImage(
       if (total > MAX_BADGE_IMAGE_BYTES) {
         await reader.cancel().catch(() => undefined);
         throw new MoodleError(
-          `Badge image is larger than ${MAX_BADGE_IMAGE_BYTES / 1024 / 1024} MB; skipping it.`,
+          `Image is larger than ${MAX_BADGE_IMAGE_BYTES / 1024 / 1024} MB; skipping it.`,
           'toolarge',
           'pluginfile.php',
         );

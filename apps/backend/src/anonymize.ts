@@ -11,7 +11,12 @@ import { sql } from './db.ts';
  * always render real names.
  */
 
-type Anonymisable = { id: number; fullname: string; email: string | null };
+type Anonymisable = {
+  id: number;
+  fullname: string;
+  email: string | null;
+  avatarUrl?: string | null;
+};
 
 /**
  * id -> label map, numbered by id ascending over the *distinct* ids present.
@@ -44,7 +49,9 @@ function buildLabels(users: readonly { id: number }[]): Map<number, string> {
  */
 function relabel<T extends Anonymisable>(user: T, labels: Map<number, string>): T {
   const label = labels.get(user.id) ?? 'Student';
-  return { ...user, fullname: label, email: null } as T;
+  // avatarUrl goes too: a profile photo identifies a person at least as well as
+  // their name does, so "Student 3" beside their face anonymises nothing.
+  return { ...user, fullname: label, email: null, avatarUrl: null } as T;
 }
 
 /**
@@ -116,6 +123,13 @@ export function anonymizeWidgetData(data: WidgetData, shared?: Map<number, strin
     case 'user_list': {
       const labels = buildLabelsFor([data.user]);
       return { ...data, user: relabel(data.user, labels) };
+    }
+    case 'progress_chart': {
+      const labels = buildLabelsFor(data.series.map((entry) => entry.user));
+      return {
+        ...data,
+        series: data.series.map((entry) => ({ ...entry, user: relabel(entry.user, labels) })),
+      };
     }
     case 'course_overview':
       // Aggregate only — carries no names or emails.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   BadgeCardsData,
   BadgeListData,
@@ -7,13 +7,14 @@ import type {
   CompletionTableData,
   CourseOverviewData,
   LeaderboardData,
+  ProgressChartData,
   UserListData,
   Widget,
   WidgetData,
   WidgetDataError,
 } from '@moodify/shared';
-import { Award, BookOpen, Medal, Table2, Trophy, User } from 'lucide-react';
-import type { BadgeSize, Density } from '@moodify/shared';
+import { Award, BookOpen, LineChart, Medal, Table2, TrendingUp, Trophy, User } from 'lucide-react';
+import type { BadgeSize, ChartMarker, Density } from '@moodify/shared';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, EmptyState, ErrorNote, Spinner } from '@/ui';
 
@@ -52,6 +53,23 @@ function densityOf(config: unknown): Density {
 function badgeSizeOf(config: unknown): BadgeSize {
   const value = (config as { badgeSize?: unknown } | null)?.badgeSize;
   return value === 'medium' || value === 'large' ? value : 'small';
+}
+
+/** The chart's display-only settings, defaulted the same way the zod schema does. */
+function chartOptionsOf(config: unknown) {
+  const raw = (config ?? {}) as Record<string, unknown>;
+  const marker = raw.marker;
+  const avatarSize = raw.avatarSize;
+  return {
+    marker: (marker === 'avatar' || marker === 'both' || marker === 'none'
+      ? marker
+      : 'name') as ChartMarker,
+    avatarSize: (avatarSize === 'small' || avatarSize === 'large'
+      ? avatarSize
+      : 'medium') as BadgeSize,
+    showLegend: raw.showLegend !== false,
+    showArea: raw.showArea === true,
+  };
 }
 
 /** Colour band for a completion bar. Untracked never reaches here. */
@@ -135,7 +153,237 @@ function BadgeList({ badges, badgeSize }: { badges: BadgeType[]; badgeSize: Badg
 }
 
 // ---------------------------------------------------------------------------
-// The five renderers
+// progress_chart
+// ---------------------------------------------------------------------------
+
+/** Distinct hues, in a fixed order so a student keeps their colour between reloads. */
+const LINE_COLORS = [
+  '#6366f1', '#10b981', '#f59e0b', '#f43f5e',
+  '#38bdf8', '#a855f7', '#84cc16', '#fb923c',
+];
+
+/** Diameter of the avatar marker, in px. Same three steps as the badge icons. */
+const AVATAR_PX: Record<BadgeSize, number> = { small: 20, medium: 30, large: 44 };
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map((part) => [...part][0] ?? '').join('').toUpperCase() || '?';
+}
+
+/** Width of the room the marker needs on the right, so a line never runs off the edge. */
+function markerRoom(marker: ChartMarker, avatar: number): number {
+  if (marker === 'none') return 8;
+  if (marker === 'avatar') return avatar + 8;
+  return marker === 'both' ? avatar + 78 : 78;
+}
+
+function axisLabel(iso: string, spanMs: number): string {
+  const date = new Date(iso);
+  return spanMs <= 36 * 60 * 60 * 1000
+    ? date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
+}
+
+/**
+ * Hand-drawn SVG rather than a charting library: one dependency-free component covers
+ * the two metrics this widget has, and the markers (a face at the end of each line) are
+ * not something a stock line chart does anyway.
+ *
+ * Sized from a measured container instead of a scaled viewBox — a viewBox would stretch
+ * the text and squash the avatars out of round.
+ */
+function ProgressChart({
+  data,
+  config,
+}: {
+  data: ProgressChartData;
+  config: {
+    marker: ChartMarker;
+    avatarSize: BadgeSize;
+    showLegend: boolean;
+    showArea: boolean;
+  };
+}) {
+  const plotted = data.series.filter((entry) => entry.points.length > 0);
+  const hasData = plotted.length > 0;
+
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const hostRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = hostRef.current;
+    if (node === null) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setBox({ w: entry.contentRect.width, h: entry.contentRect.height });
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+    // hasData decides whether the host element exists at all.
+  }, [hasData]);
+
+  if (!hasData) {
+    return (
+      <EmptyState
+        icon={<LineChart className="h-6 w-6" />}
+        title="Collecting data"
+        // The sampler writes one point per 15 minutes (sync.ts), so this is honest
+        // rather than a stand-in for "something went wrong".
+        hint="The chart fills in as Moodify samples progress — the first points appear within about 15 minutes."
+      />
+    );
+  }
+
+  const avatar = AVATAR_PX[config.avatarSize];
+  const padding = {
+    left: data.metric === 'percent' ? 34 : 26,
+    right: markerRoom(config.marker, avatar),
+    top: avatar / 2 + 4,
+    bottom: 20,
+  };
+  const width = Math.max(box.w, 160);
+  const height = Math.max(box.h, 120);
+  const plotW = Math.max(width - padding.left - padding.right, 10);
+  const plotH = Math.max(height - padding.top - padding.bottom, 10);
+
+  const t0 = new Date(data.from).getTime();
+  const t1 = new Date(data.to).getTime();
+  const spanMs = Math.max(t1 - t0, 1);
+  const maxValue =
+    data.metric === 'percent'
+      ? 100
+      : // Badge counts have no ceiling; round up so the top line is not glued to the frame.
+        Math.max(1, ...plotted.flatMap((entry) => entry.points.map((point) => point.v)));
+
+  const x = (iso: string) => padding.left + ((new Date(iso).getTime() - t0) / spanMs) * plotW;
+  const y = (value: number) => padding.top + plotH - (value / maxValue) * plotH;
+
+  const ticks = [0, 0.5, 1].map((fraction) => Math.round(maxValue * fraction));
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      {/* overflow-hidden matters: the SVG is sized *from* this box, so letting it push
+          the box wider would feed the ResizeObserver its own output. */}
+      <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden">
+        <svg width={width} height={height} className="block">
+          {ticks.map((tick) => (
+            <g key={tick}>
+              <line
+                x1={padding.left}
+                x2={padding.left + plotW}
+                y1={y(tick)}
+                y2={y(tick)}
+                stroke="currentColor"
+                strokeWidth={1}
+                className="text-white/8"
+              />
+              <text x={padding.left - 6} y={y(tick) + 4} textAnchor="end" className="fill-current text-[10px] text-muted">
+                {data.metric === 'percent' ? `${tick}%` : tick}
+              </text>
+            </g>
+          ))}
+          <text x={padding.left} y={height - 4} className="fill-current text-[10px] text-muted">
+            {axisLabel(data.from, spanMs)}
+          </text>
+          <text x={padding.left + plotW} y={height - 4} textAnchor="end" className="fill-current text-[10px] text-muted">
+            {axisLabel(data.to, spanMs)}
+          </text>
+
+          {plotted.map((entry, index) => {
+            const color = LINE_COLORS[index % LINE_COLORS.length] ?? '#6366f1';
+            const path = entry.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.t)},${y(p.v)}`).join(' ');
+            const last = entry.points[entry.points.length - 1];
+            if (last === undefined) return null;
+            const lastX = x(last.t);
+            const lastY = y(last.v);
+            const avatarUrl = assetUrl(entry.user.avatarUrl ?? null);
+            const drawAvatar = config.marker === 'avatar' || config.marker === 'both';
+            const drawName = config.marker === 'name' || config.marker === 'both';
+            const labelX = lastX + (drawAvatar ? avatar / 2 + 6 : 8);
+
+            return (
+              <g key={entry.user.id}>
+                {config.showArea ? (
+                  <path
+                    d={`${path} L${lastX},${padding.top + plotH} L${x(entry.points[0]?.t ?? data.from)},${padding.top + plotH} Z`}
+                    fill={color}
+                    opacity={0.12}
+                  />
+                ) : null}
+                <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                {/* A single sample is a dot, not a line — without this it renders as nothing. */}
+                <circle cx={lastX} cy={lastY} r={3} fill={color} />
+
+                {drawAvatar ? (
+                  <>
+                    <clipPath id={`avatar-${entry.user.id}`}>
+                      <circle cx={lastX} cy={lastY} r={avatar / 2} />
+                    </clipPath>
+                    {avatarUrl ? (
+                      <image
+                        href={avatarUrl}
+                        x={lastX - avatar / 2}
+                        y={lastY - avatar / 2}
+                        width={avatar}
+                        height={avatar}
+                        preserveAspectRatio="xMidYMid slice"
+                        clipPath={`url(#avatar-${entry.user.id})`}
+                      />
+                    ) : (
+                      // No picture synced: initials keep the marker readable instead of
+                      // dropping to an anonymous dot.
+                      <>
+                        <circle cx={lastX} cy={lastY} r={avatar / 2} fill={color} opacity={0.25} />
+                        <text
+                          x={lastX}
+                          y={lastY + avatar * 0.14}
+                          textAnchor="middle"
+                          fill={color}
+                          style={{ fontSize: avatar * 0.42 }}
+                        >
+                          {initials(entry.user.fullname)}
+                        </text>
+                      </>
+                    )}
+                    <circle cx={lastX} cy={lastY} r={avatar / 2} fill="none" stroke={color} strokeWidth={2} />
+                  </>
+                ) : null}
+
+                {drawName ? (
+                  <text x={labelX} y={lastY + 4} fill={color} className="text-[11px]">
+                    {entry.user.fullname.length > 12
+                      ? `${entry.user.fullname.slice(0, 11)}…`
+                      : entry.user.fullname}
+                  </text>
+                ) : null}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {config.showLegend ? (
+        <ul className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-xs">
+          {plotted.map((entry, index) => (
+            <li key={entry.user.id} className="flex items-center gap-1.5">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: LINE_COLORS[index % LINE_COLORS.length] }}
+              />
+              <span className="truncate">{entry.user.fullname}</span>
+              <span className="tabular-nums text-muted">
+                {data.metric === 'percent'
+                  ? `${Math.round(entry.points[entry.points.length - 1]?.v ?? 0)}%`
+                  : (entry.points[entry.points.length - 1]?.v ?? 0)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The other renderers
 // ---------------------------------------------------------------------------
 
 function CompletionTable({ data, density }: { data: CompletionTableData; density: Density }) {
@@ -393,6 +641,8 @@ export function autoTitle(widget: Widget, data: Payload | null): string {
         return 'Leaderboard';
       case 'user_list':
         return data.user.fullname;
+      case 'progress_chart':
+        return data.metric === 'badges' ? 'Badges over time' : 'Completion over time';
     }
   }
   const labels: Record<Widget['type'], string> = {
@@ -402,6 +652,7 @@ export function autoTitle(widget: Widget, data: Payload | null): string {
     course_overview: 'Course overview',
     leaderboard: 'Leaderboard',
     user_list: 'User',
+    progress_chart: 'Over time',
   };
   return labels[widget.type];
 }
@@ -440,6 +691,12 @@ export const WIDGET_META: Record<
     label: 'User',
     description: 'One student: their badges and completion across courses.',
     icon: User,
+  },
+  progress_chart: {
+    label: 'Over time',
+    description:
+      'Badges or completion plotted over the last week, one line per student — names or profile pictures at the front of each line.',
+    icon: TrendingUp,
   },
 };
 
@@ -527,6 +784,8 @@ export function WidgetBody({
       return <Leaderboard data={data} density={density} />;
     case 'user_list':
       return <UserList data={data} density={density} badgeSize={badgeSize} />;
+    case 'progress_chart':
+      return <ProgressChart data={data} config={chartOptionsOf(widget.config)} />;
     default:
       return null;
   }

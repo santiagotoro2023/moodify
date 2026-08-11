@@ -2,6 +2,7 @@ import { ZodError } from 'zod';
 import {
   parseWidgetConfig,
   type Badge,
+  type ChartWindow,
   type CompletionEntry,
   type Course,
   type MoodleUser,
@@ -44,6 +45,7 @@ type UserRow = {
   moodle_user_id: number;
   fullname: string;
   email: string | null;
+  avatar_image_path?: string | null;
 };
 
 type BadgeRow = {
@@ -136,6 +138,21 @@ function toCourse(row: CourseRow): Course {
 
 function toUser(row: UserRow): MoodleUser {
   return { id: row.moodle_user_id, fullname: row.fullname, email: row.email };
+}
+
+/**
+ * Like toUser, but with the profile picture attached. `base` is the route prefix the
+ * caller is allowed to serve avatars from — public dashboards get a token-scoped one so
+ * a share link cannot be turned into a directory of faces (§12).
+ *
+ * Only ever set when the file is actually cached: a null tells the frontend to draw
+ * initials rather than fire a request that 404s.
+ */
+function toUserWithAvatar(row: UserRow, base: string): MoodleUser {
+  return {
+    ...toUser(row),
+    avatarUrl: row.avatar_image_path ? `${base}/${row.moodle_user_id}` : null,
+  };
 }
 
 /**
@@ -570,6 +587,104 @@ async function userList(config: WidgetConfig['user_list']): Promise<WidgetData |
 }
 
 // ---------------------------------------------------------------------------
+// progress_chart — the only widget that reads metric_history instead of the
+// live snapshot.
+// ---------------------------------------------------------------------------
+
+type HistoryRow = {
+  moodle_user_id: number;
+  recorded_at: Date;
+  badge_count: number;
+  percent_complete: number | null;
+};
+
+const WINDOW_MS: Record<Exclude<ChartWindow, 'auto'>, number> = {
+  '6h': 6 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+};
+
+/** Matches HISTORY_RETENTION_DAYS in sync.ts — nothing older than this exists. */
+const MAX_WINDOW_MS = WINDOW_MS['7d'];
+
+async function progressChart(
+  config: WidgetConfig['progress_chart'],
+  avatarBase: string,
+): Promise<WidgetData | WidgetDataError> {
+  let scopedCourseId: number | null = null;
+  if (config.scope === 'course') {
+    if (config.courseId === null) return fail('No course selected for this widget.');
+    const course = await findCourse(config.courseId);
+    if (course === null) return fail(COURSE_GONE);
+    scopedCourseId = course.id;
+  }
+
+  const now = new Date();
+  // 'auto' grows with the data — an install two hours old plots two hours — but can
+  // never reach past what sync.ts still retains.
+  const from = new Date(now.getTime() - (config.window === 'auto' ? MAX_WINDOW_MS : WINDOW_MS[config.window]));
+
+  const { rows: userRows } = await sql<UserRow>(
+    `select distinct u.moodle_user_id, u.fullname, u.email, u.avatar_image_path
+       from enrollments e
+       join moodle_users u on u.moodle_user_id = e.moodle_user_id
+      where ($1::int is null or e.moodle_course_id = $1::int)
+        and ${studentFilter('$2')}
+        and ${excludeFilter('$3')}
+        and ($4::int[] = '{}'::int[] or u.moodle_user_id = any($4::int[]))
+      order by u.fullname asc, u.moodle_user_id asc`,
+    [scopedCourseId, config.includeStaff, config.excludeUserIds, config.userIds],
+  );
+  if (userRows.length === 0) {
+    return { type: 'progress_chart', metric: config.metric, from: from.toISOString(), to: now.toISOString(), series: [] };
+  }
+
+  const { rows: history } = await sql<HistoryRow>(
+    `select moodle_user_id, recorded_at, badge_count, percent_complete
+       from metric_history
+      where moodle_user_id = any($1::int[])
+        and moodle_course_id is not distinct from $2::int
+        and recorded_at >= $3
+      order by recorded_at asc`,
+    [userRows.map((row) => row.moodle_user_id), scopedCourseId, from],
+  );
+
+  const points = new Map<number, { t: string; v: number }[]>();
+  for (const row of history) {
+    // An untracked completion is not a zero, so it is left out of the line entirely.
+    const value = config.metric === 'badges' ? row.badge_count : row.percent_complete;
+    if (value === null) continue;
+    const list = points.get(row.moodle_user_id);
+    const point = { t: row.recorded_at.toISOString(), v: Number(value) };
+    if (list === undefined) points.set(row.moodle_user_id, [point]);
+    else list.push(point);
+  }
+
+  const series = userRows.map((row) => ({
+    user: toUserWithAvatar(row, avatarBase),
+    points: points.get(row.moodle_user_id) ?? [],
+  }));
+
+  // Newest value first: the legend reads as the standings. Nobody-yet sorts last.
+  const latest = (entry: (typeof series)[number]): number =>
+    entry.points[entry.points.length - 1]?.v ?? -1;
+  series.sort((a, b) => latest(b) - latest(a) || a.user.fullname.localeCompare(b.user.fullname));
+
+  // An explicit pick of students is honoured in full; `limit` only trims "everyone".
+  const trimmed = config.userIds.length > 0 ? series : series.slice(0, config.limit);
+
+  const earliest = history[0]?.recorded_at;
+  return {
+    type: 'progress_chart',
+    metric: config.metric,
+    // The axis starts where the data does, so a two-hour-old install is not 95% blank.
+    from: (earliest !== undefined && earliest > from ? earliest : from).toISOString(),
+    to: now.toISOString(),
+    series: trimmed,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -587,11 +702,15 @@ function configMessage(error: ZodError): string {
  * or stale config; genuine infrastructure failures still throw so the route can
  * answer with a 500.
  */
-export async function resolveWidgetData(widget: {
-  id: number;
-  type: WidgetType;
-  config: unknown;
-}): Promise<WidgetData | WidgetDataError> {
+export async function resolveWidgetData(
+  widget: {
+    id: number;
+    type: WidgetType;
+    config: unknown;
+  },
+  /** Route prefix avatars are served from for this caller. See toUserWithAvatar. */
+  avatarBase = '/api/user-image',
+): Promise<WidgetData | WidgetDataError> {
   try {
     switch (widget.type) {
       case 'completion_table':
@@ -606,6 +725,8 @@ export async function resolveWidgetData(widget: {
         return await leaderboard(parseWidgetConfig('leaderboard', widget.config));
       case 'user_list':
         return await userList(parseWidgetConfig('user_list', widget.config));
+      case 'progress_chart':
+        return await progressChart(parseWidgetConfig('progress_chart', widget.config), avatarBase);
       default:
         return fail(`Unknown widget type "${String(widget.type)}".`);
     }

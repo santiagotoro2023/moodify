@@ -15,6 +15,7 @@ export const WIDGET_TYPES = [
   'course_overview',
   'leaderboard',
   'user_list',
+  'progress_chart',
 ] as const;
 export type WidgetType = (typeof WIDGET_TYPES)[number];
 
@@ -107,6 +108,40 @@ export const userListConfig = z.object({
   badgeSize,
 });
 
+/**
+ * "X over time". The only widget that reads history rather than the live snapshot
+ * (§1 non-goals said live-only; this was added later on request).
+ *
+ * The window scales outward on its own — a fresh install plots the hour it has, and
+ * grows to the full week of retained samples. Older samples are pruned, so the chart
+ * rolls rather than emptying itself every Monday.
+ */
+export const CHART_WINDOWS = ['auto', '6h', '24h', '7d'] as const;
+export type ChartWindow = (typeof CHART_WINDOWS)[number];
+
+/** How each line says whose it is, at its newest point. */
+export const CHART_MARKERS = ['name', 'avatar', 'both', 'none'] as const;
+export type ChartMarker = (typeof CHART_MARKERS)[number];
+
+export const progressChartConfig = z.object({
+  metric: z.enum(['badges', 'percent']).default('badges'),
+  ...courseScope,
+  /** Empty = everyone in scope, trimmed to `limit` by the metric's current value. */
+  userIds: z.array(userId).max(50).default([]),
+  window: z.enum(CHART_WINDOWS).default('auto'),
+  limit: z.number().int().min(1).max(20).default(8),
+  marker: z.enum(CHART_MARKERS).default('name'),
+  /** Only meaningful when `marker` draws an avatar. Same three steps as badge icons. */
+  avatarSize: z.enum(BADGE_SIZES).default('medium'),
+  showLegend: z.boolean().default(true),
+  /** Fills under each line. Reads well with one or two students, muddy with eight. */
+  showArea: z.boolean().default(false),
+  includeStaff: z.boolean().default(false),
+  excludeUserIds,
+  // No `density`: a chart has no rows to make shorter, and avatarSize already covers
+  // "make it readable from across the room".
+});
+
 export const WIDGET_CONFIG_SCHEMAS = {
   completion_table: completionTableConfig,
   badge_cards: badgeCardsConfig,
@@ -114,6 +149,7 @@ export const WIDGET_CONFIG_SCHEMAS = {
   course_overview: courseOverviewConfig,
   leaderboard: leaderboardConfig,
   user_list: userListConfig,
+  progress_chart: progressChartConfig,
 } satisfies Record<WidgetType, z.ZodTypeAny>;
 
 export type WidgetConfig = {
@@ -123,6 +159,7 @@ export type WidgetConfig = {
   course_overview: z.infer<typeof courseOverviewConfig>;
   leaderboard: z.infer<typeof leaderboardConfig>;
   user_list: z.infer<typeof userListConfig>;
+  progress_chart: z.infer<typeof progressChartConfig>;
 };
 
 /** Parses an untrusted config blob against the schema for `type`. Throws ZodError. */
@@ -143,6 +180,8 @@ export const WIDGET_DEFAULTS: {
   course_overview: { config: {}, w: 3, h: 3, title: 'Course overview' },
   leaderboard: { config: { scope: 'all', limit: 10 }, w: 3, h: 5, title: 'Leaderboard' },
   user_list: { config: { scope: 'all' }, w: 4, h: 5, title: 'User' },
+  // Wider than tall: a line chart needs horizontal room before it needs vertical.
+  progress_chart: { config: { scope: 'all', metric: 'badges' }, w: 6, h: 5, title: 'Over time' },
 };
 
 // ---------------------------------------------------------------------------
@@ -160,6 +199,11 @@ export interface MoodleUser {
   id: number;
   fullname: string;
   email: string | null;
+  /**
+   * Moodify's own proxy for the Moodle profile picture, or null when there is none
+   * cached. Always null on an anonymized public view — a face is a name.
+   */
+  avatarUrl?: string | null;
 }
 
 export interface Badge {
@@ -302,13 +346,33 @@ export interface UserListData {
   completion: { course: Course; entry: CompletionEntry }[];
 }
 
+/**
+ * One student's line. `points` is ordered oldest-first and may be shorter than another
+ * series' — a student who enrolled yesterday has no samples from last week.
+ */
+export interface ProgressSeries {
+  user: MoodleUser;
+  points: { t: string; v: number }[];
+}
+
+export interface ProgressChartData {
+  type: 'progress_chart';
+  metric: 'badges' | 'percent';
+  /** ISO bounds of the window actually plotted, so the axis is the same for every line. */
+  from: string;
+  to: string;
+  /** Ordered by newest value descending — whoever is winning is first in the legend. */
+  series: ProgressSeries[];
+}
+
 export type WidgetData =
   | CompletionTableData
   | BadgeCardsData
   | BadgeListData
   | CourseOverviewData
   | LeaderboardData
-  | UserListData;
+  | UserListData
+  | ProgressChartData;
 
 /** Widget data resolution failed (e.g. its course was deleted in Moodle). */
 export interface WidgetDataError {

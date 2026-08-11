@@ -6,6 +6,7 @@ import type {
   CourseOverviewData,
   LeaderboardData,
   MoodleUser,
+  ProgressChartData,
   UserListData,
 } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
@@ -171,6 +172,47 @@ test('user_list relabels its single user and keeps badges and completion', () =>
   assert.equal(anon.user.id, 42);
   assert.deepEqual(anon.badges, data.badges);
   assert.deepEqual(anon.completion, data.completion);
+});
+
+test('progress_chart is relabelled and stripped of profile pictures', () => {
+  const data: ProgressChartData = {
+    type: 'progress_chart',
+    metric: 'badges',
+    from: '2026-08-01T00:00:00.000Z',
+    to: '2026-08-08T00:00:00.000Z',
+    series: [
+      {
+        user: { ...user(7, 'Zoe'), avatarUrl: '/api/public/tok/user-image/7' },
+        points: [{ t: '2026-08-01T00:00:00.000Z', v: 2 }],
+      },
+      { user: { ...user(3, 'Amir'), avatarUrl: null }, points: [] },
+    ],
+  };
+
+  const anon = anonymizeWidgetData(data);
+  if (anon.type !== 'progress_chart') throw new Error('variant changed');
+
+  assert.deepEqual(
+    anon.series.map((s) => s.user.fullname),
+    ['Student 2', 'Student 1'],
+  );
+  // THE assertion in this file: a face identifies a person as well as a name does, so
+  // an anonymised public dashboard must not carry a URL that resolves to one.
+  assert.deepEqual(
+    anon.series.map((s) => s.user.avatarUrl),
+    [null, null],
+  );
+  assert.deepEqual(anon.series[0]?.points, data.series[0]?.points);
+});
+
+test('every anonymised variant nulls avatarUrl, not just the chart', () => {
+  const withAvatar = { ...user(1, 'Ana'), avatarUrl: '/api/user-image/1' };
+  const board = anonymizeWidgetData({
+    type: 'leaderboard',
+    entries: [{ user: withAvatar, badgeCount: 3 }],
+  });
+  if (board.type !== 'leaderboard') throw new Error('variant changed');
+  assert.equal(board.entries[0]?.user.avatarUrl, null);
 });
 
 test('course_overview carries no personal data and passes through unchanged', () => {

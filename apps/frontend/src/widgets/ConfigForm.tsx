@@ -157,6 +157,54 @@ export function WidgetConfigForm({
     </div>
   );
 
+  const chartUserIds = Array.isArray(config.userIds) ? (config.userIds as number[]) : [];
+  const toggleChartUser = (uid: number) =>
+    set(
+      'userIds',
+      chartUserIds.includes(uid)
+        ? chartUserIds.filter((x) => x !== uid)
+        : [...chartUserIds, uid],
+    );
+
+  /** Opt-IN list, the mirror of excludePicker: nothing ticked means "everyone". */
+  const chartUserPicker = () => (
+    <div>
+      <Label>Students on the chart</Label>
+      <p className="mb-2 text-xs text-muted">
+        Tick nobody to chart everyone in scope, or pick exactly who should race.
+      </p>
+      {users.length === 0 ? (
+        <p className="text-xs text-muted">No students synced yet.</p>
+      ) : (
+        <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl border border-edge p-2">
+          {users.map((user) => (
+            <label
+              key={user.id}
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-surface"
+            >
+              <input
+                type="checkbox"
+                className="accent-accent"
+                checked={chartUserIds.includes(user.id)}
+                onChange={() => toggleChartUser(user.id)}
+              />
+              <span className="truncate">{user.fullname}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      {chartUserIds.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => set('userIds', [])}
+          className="mt-1 text-xs text-accent underline underline-offset-2"
+        >
+          Clear selection — chart everyone
+        </button>
+      ) : null}
+    </div>
+  );
+
   /** Sort control shared by the widgets that render a list of rows. */
   const sortPicker = (
     options: { value: string; label: string }[],
@@ -339,6 +387,114 @@ export function WidgetConfigForm({
         </>
       ) : null}
 
+      {widget.type === 'progress_chart' ? (
+        <>
+          <div>
+            <Label htmlFor={id('metric')}>Show</Label>
+            <Select
+              id={id('metric')}
+              value={String(config.metric ?? 'badges')}
+              onChange={(e) => set('metric', e.target.value)}
+            >
+              <option value="badges">Badges over time</option>
+              <option value="percent">Completion over time</option>
+            </Select>
+          </div>
+          {scopePicker()}
+          {scope === 'course' ? coursePicker() : null}
+          <div>
+            <Label htmlFor={id('window')}>Time span</Label>
+            <Select
+              id={id('window')}
+              value={String(config.window ?? 'auto')}
+              onChange={(e) => set('window', e.target.value)}
+            >
+              <option value="auto">Automatic — grows to a week, then rolls</option>
+              <option value="6h">Last 6 hours</option>
+              <option value="24h">Last 24 hours</option>
+              <option value="7d">Last 7 days</option>
+            </Select>
+            <p className="mt-1 text-xs text-muted">
+              A week is the maximum: samples older than that are deleted, so the chart
+              always shows the last seven days rather than emptying itself.
+            </p>
+          </div>
+          {chartUserPicker()}
+          {chartUserIds.length === 0 ? (
+            <div>
+              <Label htmlFor={id('limit')}>Show top</Label>
+              <Input
+                id={id('limit')}
+                type="number"
+                min={1}
+                max={20}
+                value={String(config.limit ?? 8)}
+                onChange={(e) => set('limit', Number(e.target.value))}
+              />
+              <p className="mt-1 text-xs text-muted">
+                Ranked by their current value, so the chart stays readable in a big class.
+              </p>
+            </div>
+          ) : null}
+          <div>
+            <Label htmlFor={id('marker')}>Label each line with</Label>
+            <Select
+              id={id('marker')}
+              value={String(config.marker ?? 'name')}
+              onChange={(e) => set('marker', e.target.value)}
+            >
+              <option value="name">Their name</option>
+              <option value="avatar">Their profile picture</option>
+              <option value="both">Picture and name</option>
+              <option value="none">Nothing — legend only</option>
+            </Select>
+            <p className="mt-1 text-xs text-muted">
+              Students with no picture in Moodle get their initials instead. Profile
+              pictures are always hidden on an anonymised public dashboard.
+            </p>
+          </div>
+          {config.marker === 'avatar' || config.marker === 'both' ? (
+            <div>
+              <Label htmlFor={id('avatarSize')}>Picture size</Label>
+              <Select
+                id={id('avatarSize')}
+                value={String(config.avatarSize ?? 'medium')}
+                onChange={(e) => set('avatarSize', e.target.value)}
+              >
+                <option value="small">Small</option>
+                <option value="medium">Medium</option>
+                <option value="large">Large</option>
+              </Select>
+            </div>
+          ) : null}
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor={id('legend')} className="mb-0">
+              Show legend
+            </Label>
+            <Switch
+              id={id('legend')}
+              checked={config.showLegend !== false}
+              onCheckedChange={(v) => set('showLegend', v)}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor={id('area')} className="mb-0">
+              Fill under the lines
+              <span className="mt-0.5 block text-xs font-normal text-muted">
+                Reads well with a few students, muddy with eight.
+              </span>
+            </Label>
+            <Switch
+              id={id('area')}
+              checked={config.showArea === true}
+              onCheckedChange={(v) => set('showArea', v)}
+            />
+          </div>
+          {staffToggle()}
+          {excludePicker()}
+        </>
+      ) : null}
+
       {widget.type === 'user_list' ? (
         <>
           {userPicker()}
@@ -355,7 +511,7 @@ export function WidgetConfigForm({
         </>
       ) : null}
 
-      {densityPicker()}
+      {widget.type === 'progress_chart' ? null : densityPicker()}
       {widget.type === 'badge_cards' || widget.type === 'badge_list' || widget.type === 'user_list'
         ? badgeSizePicker()
         : null}

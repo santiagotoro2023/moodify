@@ -125,11 +125,29 @@ known-good snapshot keeps rendering.
 their completion snapshots away, sometimes because of a transient API hiccup. They simply stop
 having `last_seen_at` refreshed.
 
+**History, and the one exception to "live snapshot only".** Everything except the *Over time*
+widget reads a snapshot that each sync overwrites. That widget needs a trail, so `metric_history`
+gets one sample of every student's badge count and completion **every 15 minutes**, independent of
+the poll interval, and anything older than **7 days** is deleted. The window therefore scales
+outward on its own — a two-hour-old install charts two hours — up to a week, and then rolls forward
+a sample at a time rather than emptying itself. Both bounds are constants in `sync.ts`. Sampling is
+gated on the newest row in the table, not on a timer in the process, so restarting the container
+does not restart the cadence.
+
+**Profile pictures.** Synced from `core_enrol_get_enrolled_users` and cached locally, for the same
+reason badge icons are: `pluginfile.php` needs the web service token, so Moodle can never be
+hotlinked. Moodle sends a URL even for users who never uploaded one — it points at the theme's
+generic silhouette rather than `pluginfile.php`, and those are ignored so the chart can fall back to
+initials instead of a row of identical strangers. Unlike badge icons, a face is personal data:
+avatars are served only to a logged-in admin (`/api/user-image/:id`) or through a share token whose
+dashboard is **not** anonymised (`/api/public/:token/user-image/:id`).
+
 **Anonymization.** With *Anonymize names* on, the public route replaces names with `Student 1`,
 `Student 2`, … numbered by ascending Moodle user id so the labels stay stable across reloads, and
-strips email entirely. Initials were rejected: they are frequently re-identifying in a class of
-thirty. Substitution happens on the server — real names are never sent to a public client. The
-admin view always shows real names.
+strips email entirely, along with the profile picture — a face identifies someone at least as well
+as a name, so "Student 3" beside their photo anonymises nothing. Initials were rejected for the
+same reason: they are frequently re-identifying in a class of thirty. Substitution happens on the
+server — real names are never sent to a public client. The admin view always shows real names.
 
 **Public dashboards and personal data.** A public dashboard has no access control whatsoever once
 the link exists. Names, badges and completion figures are personal data; under the Swiss FADP,
