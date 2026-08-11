@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Responsive, WidthProvider, type Layout } from 'react-grid-layout';
+import RGL, { WidthProvider, type Layout } from 'react-grid-layout';
 import type { Dashboard, Widget, WidgetData, WidgetDataError } from '@moodify/shared';
 import { ChevronDown, ChevronUp, GripVertical, Pencil, Settings2, Trash2 } from 'lucide-react';
 import { api, cn } from '@/lib/api';
@@ -7,9 +7,21 @@ import { Button, Dialog } from '@/ui';
 import { WIDGET_META, WidgetBody, autoTitle } from '@/widgets';
 import { WidgetConfigForm } from '@/widgets/ConfigForm';
 
-const GridLayout = WidthProvider(Responsive);
+const GridLayout = WidthProvider(RGL);
 
-const COLS = { lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 };
+/**
+ * A dashboard has ONE layout, authored at twelve columns, and it is kept at twelve
+ * columns on every screen — the widgets get narrower, never rearranged.
+ *
+ * This was `Responsive` with cols {lg:12, md:10, sm:6, xs:4, xxs:2} and the same layout
+ * array handed to all five breakpoints. react-grid-layout does not just *display* a
+ * layout that overflows the current column count, it rewrites it — two six-wide widgets
+ * side by side do not fit in ten columns, so the second one gets clamped and pushed
+ * underneath. That correction came straight back through onLayoutChange and was saved,
+ * so merely opening the dashboard on a narrower window silently destroyed the arrangement
+ * and the widths with it. A fixed column count makes that structurally impossible.
+ */
+const COLS = 12;
 const COLLAPSED_H = 1;
 
 /**
@@ -148,9 +160,8 @@ export function DashboardGrid({
 }) {
   const [titles, setTitles] = useState<Record<number, string>>({});
   const [configuring, setConfiguring] = useState<Widget | null>(null);
-  // react-grid-layout fires onLayoutChange once on mount; persisting that would
-  // write the layout back on every page load.
-  const mounted = useRef(false);
+  /** Signature of the last layout written, so an unchanged one is never re-saved. */
+  const saved = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => {
@@ -169,24 +180,44 @@ export function DashboardGrid({
     isResizable: !readOnly && !widget.isCollapsed,
   }));
 
+  /**
+   * What the database already holds, in the same shape `persist` builds. Plain
+   * `widget.h` in both cases: persist substitutes the stored height back in for a
+   * collapsed widget, so the placeholder height never appears on either side.
+   */
+  const storedSignature = dashboard.widgets
+    .map((widget) => `${widget.id}:${widget.x},${widget.y},${widget.w},${widget.h}`)
+    .sort()
+    .join('|');
+
   const persist = (next: Layout[]) => {
     if (readOnly) return;
-    if (!mounted.current) {
-      mounted.current = true;
-      return;
-    }
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const items = next.map((item) => ({
+
+    const items = next.map((item) => {
+      const widget = dashboard.widgets.find((w) => w.id === Number(item.i));
+      return {
         id: Number(item.i),
         x: item.x,
         y: item.y,
         w: item.w,
         // Never persist the collapsed placeholder height as the real height.
-        h: dashboard.widgets.find((w) => w.id === Number(item.i))?.isCollapsed
-          ? (dashboard.widgets.find((w) => w.id === Number(item.i))?.h ?? item.h)
-          : item.h,
-      }));
+        h: widget?.isCollapsed ? (widget.h ?? item.h) : item.h,
+      };
+    });
+
+    // react-grid-layout fires onLayoutChange on mount, and again once WidthProvider has
+    // measured the real container width. Comparing values rather than counting calls:
+    // a mount counter cannot tell the second of those from a genuine edit, and writing
+    // on page load is how a layout gets quietly replaced by whatever the grid computed.
+    const signature = items
+      .map((item) => `${item.id}:${item.x},${item.y},${item.w},${item.h}`)
+      .sort()
+      .join('|');
+    if (signature === (saved.current ?? storedSignature)) return;
+    saved.current = signature;
+
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
       void api.put(`/api/dashboards/${dashboard.id}/layout`, { items });
     }, 500);
   };
@@ -208,8 +239,7 @@ export function DashboardGrid({
     <>
       <GridLayout
         className="layout"
-        layouts={{ lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }}
-        breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
+        layout={layout}
         cols={COLS}
         rowHeight={56}
         margin={[16, 16]}

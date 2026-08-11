@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
   BadgeCardsData,
   BadgeListData,
@@ -272,6 +272,19 @@ function ProgressChart({
   /** Cursor position within the plot area, in px from its left edge. */
   const [hover, setHover] = useState<number | null>(null);
 
+  /**
+   * Instance prefix for the clipPath ids below.
+   *
+   * SVG ids are document-global. Two charts on one dashboard showing the same student
+   * both defined `#avatar-7`, and `url(#avatar-7)` resolves to whichever came first in
+   * the document — so the second chart clipped its faces against the first chart's
+   * circle, at the first chart's coordinates. Same size and position: invisible clip,
+   * looks fine. Different size or position: the picture is cut off, or clipped away
+   * entirely leaving the bare disc behind it. Colons are stripped because React's ids
+   * contain them and they have no business in a url() fragment.
+   */
+  const instance = useId().replace(/:/g, '');
+
   // Every distinct sample time across all lines: the crosshair snaps to these rather
   // than reading a value off the drawn line, so the tooltip only ever shows numbers that
   // were actually measured. Memoised on the payload because moving the mouse re-renders,
@@ -481,7 +494,7 @@ function ProgressChart({
 
                 {drawAvatar ? (
                   <>
-                    <clipPath id={`avatar-${entry.user.id}`}>
+                    <clipPath id={`${instance}-avatar-${entry.user.id}`}>
                       <circle cx={lastX} cy={lastY} r={avatar / 2} />
                     </clipPath>
                     {/* Opaque disc underneath, always: the tint below is translucent and
@@ -496,7 +509,7 @@ function ProgressChart({
                         width={avatar}
                         height={avatar}
                         preserveAspectRatio="xMidYMid slice"
-                        clipPath={`url(#avatar-${entry.user.id})`}
+                        clipPath={`url(#${instance}-avatar-${entry.user.id})`}
                       />
                     ) : (
                       // No picture synced: initials keep the marker readable instead of
