@@ -216,14 +216,25 @@ function ConnectionCard({
               size="sm"
               onClick={async () => {
                 setTest(null);
-                const result = await api.post<{ ok: boolean; siteName?: string; error?: string }>(
-                  '/api/connection/test',
-                );
+                const result = await api.post<{
+                  ok: boolean;
+                  siteName?: string;
+                  canDownloadFiles?: boolean;
+                  error?: string;
+                }>('/api/connection/test');
+                // "Connected" is not the whole story: the service can answer every
+                // function and still refuse files, which is what breaks badge images.
+                const filesBlocked = result.ok && result.canDownloadFiles === false;
                 setTest({
-                  ok: result.ok,
-                  message: result.ok
-                    ? `Connected to ${result.siteName ?? 'Moodle'}.`
-                    : (result.error ?? 'The connection test failed.'),
+                  ok: result.ok && !filesBlocked,
+                  message: !result.ok
+                    ? (result.error ?? 'The connection test failed.')
+                    : filesBlocked
+                      ? `Connected to ${result.siteName ?? 'Moodle'}, but badge images cannot be ` +
+                        'downloaded: this web service is not allowed to download files. In Moodle go to ' +
+                        'Site administration → Server → Web services → External services → edit your ' +
+                        'Moodify service → Show more… → tick "Can download files" → Save, then re-sync.'
+                      : `Connected to ${result.siteName ?? 'Moodle'}.`,
                 });
               }}
             >

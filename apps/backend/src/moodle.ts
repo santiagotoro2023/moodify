@@ -396,7 +396,18 @@ export interface SiteInfo {
   username: string;
   functions: string[];
   userid: number;
+  /**
+   * The External Service's "Can download files" flag. Separate from the enabled
+   * function list: a service can be allowed to call every function Moodify needs and
+   * still refuse to serve a single file through webservice/pluginfile.php.
+   */
+  downloadFiles: boolean;
 }
+
+/** What the Moodle admin has to change when downloadFiles is off. */
+export const ENABLE_DOWNLOAD_HELP =
+  'In Moodle: Site administration → Server → Web services → External services → ' +
+  'Edit your Moodify service → Show more… → tick "Can download files" → Save.';
 
 /** core_webservice_get_site_info — the connection test (§8, §9.1). */
 export async function getSiteInfo(conn: MoodleConnection): Promise<SiteInfo> {
@@ -411,6 +422,7 @@ export async function getSiteInfo(conn: MoodleConnection): Promise<SiteInfo> {
     username: readString(raw, 'username') ?? '',
     functions,
     userid: readNumber(raw, 'userid') ?? 0,
+    downloadFiles: (readNumber(raw, 'downloadfiles') ?? 0) > 0,
   };
 }
 
@@ -689,6 +701,50 @@ function sizeVariants(imageUrl: string): string[] {
     .map((size) => imageUrl.slice(0, match.index) + '/' + size + imageUrl.slice(match.index + 3))];
 }
 
+/**
+ * Turns a non-image pluginfile.php response into a MoodleError that names the fix.
+ *
+ * The common one by far is "Can download files" being off on the External Service:
+ * webservice/pluginfile.php checks that flag before it looks at the file at all, so
+ * every function can be enabled and every image still 403s. Moodle renders that as an
+ * HTML error page rather than JSON, which is why it needs matching on the body.
+ */
+function refusalError(body: string, contentType: string, token: string): MoodleError {
+  let payload: unknown = null;
+  try {
+    payload = JSON.parse(body) as unknown;
+  } catch {
+    payload = null;
+  }
+  const errorcode = readString(payload, 'errorcode');
+  const message = readString(payload, 'message') ?? readString(payload, 'error');
+
+  const haystack = `${errorcode ?? ''} ${message ?? ''} ${payload === null ? body : ''}`.toLowerCase();
+  if (haystack.includes('enabledirectdownload') || haystack.includes('file downloading')) {
+    return new MoodleError(
+      `Moodle refused to serve badge images: this web service is not allowed to download files. ${ENABLE_DOWNLOAD_HELP}`,
+      'enabledirectdownload',
+      'pluginfile.php',
+    );
+  }
+  if (errorcode !== null || message !== null) {
+    return new MoodleError(
+      `Moodle refused to serve a badge image (${errorcode ?? 'accessdenied'}): ${redact(message ?? 'access denied', token)}`,
+      errorcode ?? 'accessdenied',
+      'pluginfile.php',
+    );
+  }
+  // An HTML page with no recognisable error: quote its title, which is what Moodle
+  // puts the reason in, rather than dumping a whole page into a log line.
+  const title = /<title>([^<]{1,200})<\/title>/i.exec(body)?.[1]?.trim();
+  return new MoodleError(
+    `Moodle returned ${contentType} instead of an image${title ? ` ("${redact(decodeEntities(title), token)}")` : ''}. ` +
+      `The usual cause is "Can download files" being off on the External Service. ${ENABLE_DOWNLOAD_HELP}`,
+    'notanimage',
+    'pluginfile.php',
+  );
+}
+
 export async function downloadBadgeImage(
   conn: MoodleConnection,
   imageUrl: string,
@@ -733,22 +789,12 @@ async function fetchBadgeImage(
   const headerType = response.headers.get('content-type') ?? '';
   const contentType = (headerType.split(';')[0] ?? '').trim() || 'application/octet-stream';
 
-  // pluginfile.php answers 200 + JSON when it refuses the token.
-  if (contentType.includes('json')) {
+  // A refusal comes back as HTTP 200 with a body that is not an image: JSON when the
+  // token is rejected, a rendered HTML error page when the service forbids downloads.
+  // Anything that is not image/* is therefore a failure, never something to cache.
+  if (!contentType.startsWith('image/')) {
     const text = await response.text().catch(() => '');
-    let payload: unknown = null;
-    try {
-      payload = JSON.parse(text) as unknown;
-    } catch {
-      payload = null;
-    }
-    const errorcode = readString(payload, 'errorcode') ?? 'accessdenied';
-    const message = readString(payload, 'message') ?? readString(payload, 'error') ?? 'access denied';
-    throw new MoodleError(
-      `Moodle refused to serve a badge image (${errorcode}): ${redact(message, conn.token)}`,
-      errorcode,
-      'pluginfile.php',
-    );
+    throw refusalError(text, contentType, conn.token);
   }
 
   const declared = Number(response.headers.get('content-length') ?? '');

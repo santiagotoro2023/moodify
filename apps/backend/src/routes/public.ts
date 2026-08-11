@@ -76,7 +76,10 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
           await fetchAndStoreBadgeImage(conn, badgeId, row.url);
         } catch (err) {
           request.log.error({ badgeId, err }, 'on-demand badge image download failed');
-          return reply.code(502).send({ error: 'Badge image could not be fetched from Moodle' });
+          // The reason is the whole point of this route: moodle.ts messages are already
+          // redacted of the token, and they name the Moodle setting that needs changing.
+          const error = err instanceof Error ? err.message : 'Badge image could not be fetched';
+          return reply.code(502).send({ error });
         }
       }
     }

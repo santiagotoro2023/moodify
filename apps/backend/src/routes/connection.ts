@@ -177,7 +177,7 @@ type ConnectBody = z.infer<typeof connectBodySchema>;
  * needs no definite-assignment gymnastics around a try/catch.
  */
 type VerifyResult =
-  | { ok: true; baseUrl: string; token: string; functions: string[] }
+  | { ok: true; baseUrl: string; token: string; functions: string[]; downloadFiles: boolean }
   | { ok: false; error: string; missingFunctions: string[] | undefined };
 
 async function verifyConnection(body: ConnectBody): Promise<VerifyResult> {
@@ -188,7 +188,7 @@ async function verifyConnection(body: ConnectBody): Promise<VerifyResult> {
         ? await fetchToken(baseUrl, body.username, body.password, body.serviceShortname)
         : body.token.trim();
     const siteInfo = await getSiteInfo({ baseUrl, token });
-    return { ok: true, baseUrl, token, functions: siteInfo.functions };
+    return { ok: true, baseUrl, token, functions: siteInfo.functions, downloadFiles: siteInfo.downloadFiles };
   } catch (err) {
     return { ok: false, error: readableError(err), missingFunctions: missingFromError(err) };
   }
@@ -275,7 +275,7 @@ export async function connectionRoutes(app: FastifyInstance): Promise<void> {
     // Saved even when functions are missing: the token works, and the admin needs the
     // connection stored so Settings can tell them precisely what to enable in Moodle.
     const missing = missingFunctions(verified.functions);
-    const state = buildState(saved);
+    const state = { ...buildState(saved), canDownloadFiles: verified.downloadFiles };
     return missing.length === 0 ? state : { ...state, missingFunctions: missing };
   });
 
@@ -287,7 +287,9 @@ export async function connectionRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(400).send({ ok: false, error: 'No Moodle connection configured' });
       }
       const info = await getSiteInfo(conn);
-      return { ok: true, siteName: info.sitename };
+      // Reported separately from the function list: a service can be allowed to call
+      // every function Moodify needs and still refuse to serve badge images.
+      return { ok: true, siteName: info.sitename, canDownloadFiles: info.downloadFiles };
     } catch (err) {
       return { ok: false, error: readableError(err) };
     }
