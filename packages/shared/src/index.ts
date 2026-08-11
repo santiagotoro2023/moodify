@@ -115,8 +115,12 @@ export const userListConfig = z.object({
  * The window scales outward on its own — a fresh install plots the hour it has, and
  * grows to the full week of retained samples. Older samples are pruned, so the chart
  * rolls rather than emptying itself every Monday.
+ *
+ * 'all' is the exception: instead of Moodify's own samples it reconstructs the series
+ * from Moodle's badge-issue and activity-completion timestamps, so it reaches back to
+ * before Moodify was installed.
  */
-export const CHART_WINDOWS = ['auto', '6h', '24h', '7d'] as const;
+export const CHART_WINDOWS = ['auto', '6h', '24h', '7d', 'all'] as const;
 export type ChartWindow = (typeof CHART_WINDOWS)[number];
 
 /** How each line says whose it is, at its newest point. */
@@ -367,6 +371,12 @@ export interface ProgressChartData {
   /** ISO bounds of the window actually plotted, so the axis is the same for every line. */
   from: string;
   to: string;
+  /**
+   * True when the points are events (a badge issued, an activity completed) rather than
+   * readings taken on a clock. The value holds flat until the next event, so the line is
+   * drawn as steps — sloping between two badges would imply half a badge in between.
+   */
+  step: boolean;
   /** Ordered by newest value descending — whoever is winning is first in the legend. */
   series: ProgressSeries[];
 }

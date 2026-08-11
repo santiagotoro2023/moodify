@@ -606,6 +606,15 @@ export interface ActivityCompletionStatus {
   state: number;
   /** 0 = completion not tracked, 1 = manual, 2 = automatic. */
   tracking: number;
+  /**
+   * Unix seconds when the activity was completed, or null.
+   *
+   * This is the whole basis of the all-time chart: Moodle has been recording it since
+   * long before Moodify existed, so history can be reconstructed exactly rather than
+   * scraped out of the log store. Null (Moodle sends 0) for anything not completed, and
+   * occasionally for completions restored from a backup, which carry no timestamp.
+   */
+  timecompleted: number | null;
 }
 
 /** core_completion_get_activities_completion_status → {statuses:[…]}. */
@@ -622,10 +631,12 @@ export async function getActivitiesCompletion(
   for (const entry of readArray(raw, 'statuses')) {
     const cmid = readNumber(entry, 'cmid');
     if (cmid === null) continue;
+    const completed = readNumber(entry, 'timecompleted');
     statuses.push({
       cmid,
       state: readNumber(entry, 'state') ?? 0,
       tracking: readNumber(entry, 'tracking') ?? 0,
+      timecompleted: completed !== null && completed > 0 ? completed : null,
     });
   }
   return statuses;
@@ -889,7 +900,7 @@ export function computeCompletion(
 
 // --- self-check: `tsx src/moodle.ts` -----------------------------------------
 if (process.argv[1]?.endsWith('moodle.ts')) {
-  const s = (cmid: number, state: number, tracking: number): ActivityCompletionStatus => ({ cmid, state, tracking });
+  const s = (cmid: number, state: number, tracking: number): ActivityCompletionStatus => ({ cmid, state, tracking, timecompleted: null });
   assert.deepEqual(computeCompletion([]), { activitiesTotal: 0, activitiesCompleted: 0, percent: null });
   assert.deepEqual(computeCompletion([s(1, 1, 0), s(2, 0, 0)]), { activitiesTotal: 0, activitiesCompleted: 0, percent: null });
   assert.deepEqual(computeCompletion([s(1, 1, 1), s(2, 2, 2), s(3, 3, 2), s(4, 0, 1), s(5, 1, 0)]), { activitiesTotal: 4, activitiesCompleted: 2, percent: 50 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BadgeCardsData,
   BadgeListData,
@@ -178,28 +178,71 @@ function markerRoom(marker: ChartMarker, avatar: number): number {
 }
 
 /**
- * The sample time closest to `targetMs`, or null if there are none. `stops` is sorted,
- * so this could binary-search; a week holds 672 samples and a linear scan of that on
- * mousemove is not something anyone will ever feel.
+ * The sample time closest to `targetMs`, or null if there are none.
+ *
+ * Takes the timestamps pre-parsed (see the useMemo in ProgressChart): all-time mode can
+ * carry thousands of event times, and re-parsing them on every mousemove is the one
+ * thing in this chart that would actually be felt. Scanning that many *numbers* is not,
+ * so it stays a linear scan rather than a binary search.
  */
-function nearestStop(stops: string[], targetMs: number): string | null {
+function nearestStop(stops: { iso: string[]; ms: number[] }, targetMs: number): string | null {
   let best: string | null = null;
   let bestGap = Infinity;
-  for (const stop of stops) {
-    const gap = Math.abs(new Date(stop).getTime() - targetMs);
-    if (gap < bestGap) {
-      bestGap = gap;
-      best = stop;
-    }
+  for (let i = 0; i < stops.ms.length; i += 1) {
+    const time = stops.ms[i];
+    const iso = stops.iso[i];
+    if (time === undefined || iso === undefined) continue;
+    const gap = Math.abs(time - targetMs);
+    if (gap >= bestGap) continue;
+    bestGap = gap;
+    best = iso;
   }
   return best;
 }
 
+const HOURS_36 = 36 * 60 * 60 * 1000;
+const DAYS_60 = 60 * 24 * 60 * 60 * 1000;
+
+/** All-time spans months or years, so the axis has to widen its units with the range. */
+/**
+ * The newest point at or before `iso`, or undefined if the line had not started yet.
+ * Both strings come from toISOString(), which is fixed-width UTC — so comparing them
+ * as text is comparing them as time, without parsing 700 dates on every mousemove.
+ */
+function lastAtOrBefore(
+  points: readonly { t: string; v: number }[],
+  iso: string,
+): { t: string; v: number } | undefined {
+  for (let i = points.length - 1; i >= 0; i -= 1) {
+    const point = points[i];
+    if (point !== undefined && point.t <= iso) return point;
+  }
+  return undefined;
+}
+
 function axisLabel(iso: string, spanMs: number): string {
   const date = new Date(iso);
-  return spanMs <= 36 * 60 * 60 * 1000
-    ? date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-    : date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
+  if (spanMs <= HOURS_36) {
+    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+  if (spanMs <= DAYS_60) {
+    return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
+  }
+  return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
+/** The crosshair's own label — finer than the axis, since it names one exact moment. */
+function stopLabel(iso: string, spanMs: number): string {
+  const date = new Date(iso);
+  return spanMs <= HOURS_36
+    ? date.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleString(undefined, {
+        day: 'numeric',
+        month: 'short',
+        year: spanMs > DAYS_60 ? 'numeric' : undefined,
+        hour: '2-digit',
+        minute: '2-digit',
+      });
 }
 
 /**
@@ -228,6 +271,15 @@ function ProgressChart({
   const [box, setBox] = useState({ w: 0, h: 0 });
   /** Cursor position within the plot area, in px from its left edge. */
   const [hover, setHover] = useState<number | null>(null);
+
+  // Every distinct sample time across all lines: the crosshair snaps to these rather
+  // than reading a value off the drawn line, so the tooltip only ever shows numbers that
+  // were actually measured. Memoised on the payload because moving the mouse re-renders,
+  // and re-deriving thousands of all-time event times per frame would not be free.
+  const stops = useMemo(() => {
+    const iso = [...new Set(data.series.flatMap((entry) => entry.points.map((p) => p.t)))].sort();
+    return { iso, ms: iso.map((t) => new Date(t).getTime()) };
+  }, [data]);
   const hostRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = hostRef.current;
@@ -245,9 +297,14 @@ function ProgressChart({
       <EmptyState
         icon={<LineChart className="h-6 w-6" />}
         title="Collecting data"
-        // The sampler writes one point per 15 minutes (sync.ts), so this is honest
-        // rather than a stand-in for "something went wrong".
-        hint="The chart fills in as Moodify samples progress — the first points appear within about 15 minutes."
+        // Both branches are honest about the wait rather than standing in for
+        // "something went wrong": the sampler writes a point every 15 minutes, and the
+        // all-time source is filled by the full discovery pass on the same cadence.
+        hint={
+          data.step
+            ? 'All-time history is read from Moodle during a full sync — give it up to 15 minutes, or press Re-sync now in Settings.'
+            : 'The chart fills in as Moodify samples progress — the first points appear within about 15 minutes.'
+        }
       />
     );
   }
@@ -276,18 +333,31 @@ function ProgressChart({
   const x = (iso: string) => padding.left + ((new Date(iso).getTime() - t0) / spanMs) * plotW;
   const y = (value: number) => padding.top + plotH - (value / maxValue) * plotH;
 
+  /**
+   * Event data holds its value flat until the next event, so it is drawn as steps —
+   * sloping from two badges to three would draw two and a half badges on Wednesday.
+   * Clock-driven samples slope normally.
+   */
+  const linePath = (points: { t: string; v: number }[]) =>
+    points
+      .map((p, i) =>
+        i === 0
+          ? `M${x(p.t)},${y(p.v)}`
+          : data.step
+            ? `H${x(p.t)}V${y(p.v)}`
+            : `L${x(p.t)},${y(p.v)}`,
+      )
+      .join(' ');
+
   const ticks = [0, 0.5, 1].map((fraction) => Math.round(maxValue * fraction));
 
   const format = (value: number) =>
     data.metric === 'percent' ? `${Math.round(value * 10) / 10}%` : String(value);
 
-  // Every distinct sample time across all lines: the crosshair snaps to these rather
-  // than reading a value off the interpolated line, so the tooltip only ever shows
-  // numbers that were actually measured.
-  const stops = [...new Set(plotted.flatMap((entry) => entry.points.map((p) => p.t)))].sort();
   const hoveredAt = hover === null ? null : nearestStop(stops, t0 + (hover / plotW) * spanMs);
-  // Only lines that had reached that point by then — a student who enrolled on Friday
-  // has no Tuesday reading, and 0 would be a lie.
+  // Each line's newest point at or before the crosshair — not an exact time match. In
+  // all-time mode every student's events land on their own timestamps, so nothing would
+  // ever match exactly. A line that had not started by then is left out; 0 would be a lie.
   const readings =
     hoveredAt === null
       ? []
@@ -295,7 +365,7 @@ function ProgressChart({
           .map((entry, index) => ({
             name: entry.user.fullname,
             color: LINE_COLORS[index % LINE_COLORS.length] ?? '#6366f1',
-            point: entry.points.find((p) => p.t === hoveredAt),
+            point: lastAtOrBefore(entry.points, hoveredAt),
           }))
           .filter((row): row is typeof row & { point: { t: string; v: number } } =>
             row.point !== undefined,
@@ -347,7 +417,7 @@ function ProgressChart({
               order is the only ordering there is. */}
           {plotted.map((entry, index) => {
             const color = LINE_COLORS[index % LINE_COLORS.length] ?? '#6366f1';
-            const path = entry.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.t)},${y(p.v)}`).join(' ');
+            const path = linePath(entry.points);
             const last = entry.points[entry.points.length - 1];
             if (last === undefined) return null;
             return (
@@ -378,7 +448,10 @@ function ProgressChart({
               {readings.map((row) => (
                 <circle
                   key={row.name}
-                  cx={x(row.point.t)}
+                  // On the crosshair, not on the point that set the value: with step
+                  // lines that is exactly where the line is, and with sampled data the
+                  // two coincide anyway.
+                  cx={x(hoveredAt)}
                   cy={y(row.point.v)}
                   r={3.5}
                   fill={row.color}
@@ -469,13 +542,7 @@ function ProgressChart({
               transform: x(hoveredAt) > width - 150 ? 'translateX(-100%)' : undefined,
             }}
           >
-            <p className="mb-1 text-[10px] text-muted">
-              {new Date(hoveredAt).toLocaleString(undefined, {
-                weekday: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </p>
+            <p className="mb-1 text-[10px] text-muted">{stopLabel(hoveredAt, spanMs)}</p>
             <ul className="space-y-0.5">
               {readings.map((row) => (
                 <li key={row.name} className="flex items-center gap-1.5 whitespace-nowrap">

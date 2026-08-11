@@ -138,6 +138,23 @@ usually wants. Hovering the plot snaps a crosshair to the nearest real sample an
 value there — snapped rather than interpolated, so the tooltip only shows numbers that were actually
 measured.
 
+**All-time history, without a log store.** The *All time* window does not read
+`metric_history` at all — it reconstructs the series from timestamps Moodle has been keeping since
+long before Moodify was installed. `badge_issued.date_issued` is Moodle's own issue date, and
+`core_completion_get_activities_completion_status` returns a `timecompleted` per activity, which
+`activity_completion` now stores. Both come from calls the poller already makes, so this needs no
+extra web service function, no log-store access and no additional Moodle permission — and an
+install that is an hour old can chart a course that started last year.
+
+Two things follow from that. Only *completed* activities get a row, since an incomplete one
+contributes nothing to a cumulative history, and un-completing something in Moodle deletes its row
+so the line can go down again. And a past percentage is measured against the activities the course
+has **today**: Moodle does not report when an activity was added, so if the teacher added some
+later, early percentages read slightly lower than they did at the time. Progress toward the course
+as it now stands is the more useful reading for a leaderboard anyway. Timestamps are refreshed on
+the full discovery pass only, not every poll — they are historical facts that do not change, so
+re-reading them every 60 seconds would rewrite thousands of rows to learn nothing.
+
 **Profile pictures.** Synced from `core_enrol_get_enrolled_users` and cached locally, for the same
 reason badge icons are: `pluginfile.php` needs the web service token, so Moodle can never be
 hotlinked. Moodle sends a URL even for users who never uploaded one — it points at the theme's

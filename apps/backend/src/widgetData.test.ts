@@ -10,6 +10,7 @@ import type {
   UserListData,
 } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
+import { foldEvents } from './widgetData.ts';
 
 /**
  * Pure unit tests for the public-route anonymisation rules. The SQL side of
@@ -180,6 +181,7 @@ test('progress_chart is relabelled and stripped of profile pictures', () => {
     metric: 'badges',
     from: '2026-08-01T00:00:00.000Z',
     to: '2026-08-08T00:00:00.000Z',
+    step: false,
     series: [
       {
         user: { ...user(7, 'Zoe'), avatarUrl: '/api/public/tok/user-image/7' },
@@ -213,6 +215,104 @@ test('every anonymised variant nulls avatarUrl, not just the chart', () => {
   });
   if (board.type !== 'leaderboard') throw new Error('variant changed');
   assert.equal(board.entries[0]?.user.avatarUrl, null);
+});
+
+// ---------------------------------------------------------------------------
+// foldEvents — the all-time chart's reconstruction of history from Moodle's own
+// timestamps. The SQL either side of it needs a live Postgres; this does not.
+// ---------------------------------------------------------------------------
+
+const BUCKET = 0;
+const countAll = (counts: ReadonlyMap<number, number>) => counts.get(BUCKET) ?? 0;
+const at = (iso: string) => new Date(iso);
+const FROM = at('2026-01-01T00:00:00.000Z');
+const TO = at('2026-01-31T00:00:00.000Z');
+
+test('foldEvents counts cumulatively and carries the last value to the right edge', () => {
+  const points = foldEvents(
+    [
+      { at: at('2026-01-10T00:00:00.000Z'), key: BUCKET },
+      { at: at('2026-01-05T00:00:00.000Z'), key: BUCKET },
+    ],
+    countAll,
+    FROM,
+    TO,
+  );
+  assert.deepEqual(points, [
+    { t: FROM.toISOString(), v: 0 },
+    { t: '2026-01-05T00:00:00.000Z', v: 1 },
+    { t: '2026-01-10T00:00:00.000Z', v: 2 },
+    // Nothing happened after the 10th, but the line still reaches today.
+    { t: TO.toISOString(), v: 2 },
+  ]);
+});
+
+test('foldEvents folds undated events into the opening value', () => {
+  // A badge Moodle has no issue date for, or a completion restored from a backup: it
+  // happened, at an unknown time before the chart starts. Dropping it would understate
+  // the total forever; dating it to now would invent a spike today.
+  const points = foldEvents(
+    [
+      { at: null, key: BUCKET },
+      { at: null, key: BUCKET },
+      { at: at('2026-01-05T00:00:00.000Z'), key: BUCKET },
+    ],
+    countAll,
+    FROM,
+    TO,
+  );
+  assert.deepEqual(
+    points.map((p) => p.v),
+    [2, 3, 3],
+  );
+});
+
+test('foldEvents collapses events sharing a timestamp into one step', () => {
+  const same = at('2026-01-05T00:00:00.000Z');
+  const points = foldEvents(
+    [
+      { at: same, key: BUCKET },
+      { at: same, key: BUCKET },
+      { at: same, key: BUCKET },
+    ],
+    countAll,
+    FROM,
+    TO,
+  );
+  assert.equal(points.length, 3); // from, the one step, to
+  assert.deepEqual(
+    points.map((p) => p.v),
+    [0, 3, 3],
+  );
+});
+
+test('foldEvents averages per-course percentages rather than pooling activities', () => {
+  // Course 1 has 2 tracked activities, course 2 has 8. Completing one activity in the
+  // small course is +50% there and +25% overall — pooling would have called it +10%,
+  // and would disagree with what every other widget reports for the same student.
+  const totals = new Map([
+    [1, 2],
+    [2, 8],
+  ]);
+  const mean = (counts: ReadonlyMap<number, number>) => {
+    let sum = 0;
+    for (const [courseId, total] of totals) sum += Math.min(counts.get(courseId) ?? 0, total) / total;
+    return Math.round((sum / totals.size) * 10000) / 100;
+  };
+
+  const points = foldEvents(
+    [
+      { at: at('2026-01-05T00:00:00.000Z'), key: 1 },
+      { at: at('2026-01-06T00:00:00.000Z'), key: 2 },
+    ],
+    mean,
+    FROM,
+    TO,
+  );
+  assert.deepEqual(
+    points.map((p) => p.v),
+    [0, 25, 31.25, 31.25],
+  );
 });
 
 test('course_overview carries no personal data and passes through unchanged', () => {

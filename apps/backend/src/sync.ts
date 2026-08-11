@@ -38,6 +38,7 @@ import {
   getEnrolledUsers,
   getUserBadges,
   MoodleError,
+  type ActivityCompletionStatus,
   type MoodleConnection,
   type UserBadge,
 } from './moodle.ts';
@@ -429,9 +430,54 @@ type SyncTask =
   | { kind: 'pair'; courseId: number; userId: number }
   | { kind: 'user'; userId: number };
 
+/**
+ * Mirrors the *completed* activities of one (course, user) pair, with Moodle's own
+ * completion timestamps, into activity_completion.
+ *
+ * Full runs only. The timestamps are historical facts that do not change between polls,
+ * so re-reading them every 60 seconds would rewrite 20k rows a minute to learn nothing;
+ * once per full discovery is plenty, and metric_history already covers the live end of
+ * the chart at a finer grain.
+ *
+ * Un-completing an activity in Moodle has to remove its row, otherwise the all-time line
+ * only ever goes up — hence the delete of anything no longer in the completed set.
+ */
+async function storeCompletedActivities(
+  courseId: number,
+  userId: number,
+  statuses: readonly ActivityCompletionStatus[],
+): Promise<void> {
+  const cmids: number[] = [];
+  const times: (Date | null)[] = [];
+  for (const status of statuses) {
+    if (status.tracking === 0) continue;
+    // 3 = complete-fail, which computeCompletion also declines to count as completed.
+    if (status.state !== 1 && status.state !== 2) continue;
+    cmids.push(status.cmid);
+    times.push(status.timecompleted === null ? null : new Date(status.timecompleted * 1000));
+  }
+
+  await sql(
+    `delete from activity_completion
+      where moodle_course_id = $1 and moodle_user_id = $2 and cmid <> all($3::int[])`,
+    [courseId, userId, cmids],
+  );
+  if (cmids.length === 0) return;
+
+  await sql(
+    `insert into activity_completion (moodle_course_id, moodle_user_id, cmid, completed_at)
+     select $1, $2, entry.cmid, entry.at
+       from unnest($3::int[], $4::timestamptz[]) as entry(cmid, at)
+     on conflict (moodle_course_id, moodle_user_id, cmid)
+        do update set completed_at = excluded.completed_at`,
+    [courseId, userId, cmids, times],
+  );
+}
+
 async function refreshPair(ctx: RunContext, courseId: number, userId: number): Promise<void> {
   const statuses = await getActivitiesCompletion(ctx.conn, courseId, userId);
   const summary = computeCompletion(statuses);
+  if (ctx.mode === 'full') await storeCompletedActivities(courseId, userId, statuses);
   await upsertCompletion(
     courseId,
     userId,

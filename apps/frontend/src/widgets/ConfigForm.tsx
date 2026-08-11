@@ -413,10 +413,16 @@ export function WidgetConfigForm({
               <option value="6h">Last 6 hours</option>
               <option value="24h">Last 24 hours</option>
               <option value="7d">Last 7 days</option>
+              <option value="all">All time — including before Moodify</option>
             </Select>
             <p className="mt-1 text-xs text-muted">
-              A week is the maximum: samples older than that are deleted, so the chart
-              always shows the last seven days rather than emptying itself.
+              {config.window === 'all'
+                ? 'Rebuilt from the dates Moodle itself recorded against each badge and each ' +
+                  'completed activity, so it covers the whole course, not just since Moodify ' +
+                  'was installed. Past percentages are measured against the activities the ' +
+                  'course has today.'
+                : 'A week is the maximum for the live samples Moodify records: older ones are ' +
+                  'deleted, so the chart shows the last seven days rather than emptying itself.'}
             </p>
           </div>
           {config.window !== undefined && config.window !== 'auto' ? (

@@ -598,11 +598,187 @@ type HistoryRow = {
   percent_complete: number | null;
 };
 
-const WINDOW_MS: Record<Exclude<ChartWindow, 'auto'>, number> = {
+const WINDOW_MS: Record<Exclude<ChartWindow, 'auto' | 'all'>, number> = {
   '6h': 6 * 60 * 60 * 1000,
   '24h': 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
 };
+
+/**
+ * Turns a bag of dated events into a cumulative series.
+ *
+ * `key` buckets an event (a course id for completion, a constant for badges) and
+ * `valueOf` reads the current bucket counts as the plotted number, which is what lets
+ * one fold serve both "count them all up" and "average the per-course percentages".
+ *
+ * Exported for the unit test — the SQL either side of it needs a live Postgres.
+ */
+export function foldEvents(
+  events: readonly { at: Date | null; key: number }[],
+  valueOf: (counts: ReadonlyMap<number, number>) => number,
+  from: Date,
+  to: Date,
+): { t: string; v: number }[] {
+  const counts = new Map<number, number>();
+  const bump = (key: number): void => {
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  };
+
+  // An undated event — a badge Moodle has no issue date for, a completion restored from
+  // a course backup — happened at an unknown time before the chart starts, so it belongs
+  // in the opening value rather than being dropped or dated to now.
+  const dated: { at: Date; key: number }[] = [];
+  for (const event of events) {
+    if (event.at === null) bump(event.key);
+    else dated.push({ at: event.at, key: event.key });
+  }
+  dated.sort((a, b) => a.at.getTime() - b.at.getTime());
+
+  const points = [{ t: from.toISOString(), v: valueOf(counts) }];
+  for (let i = 0; i < dated.length; i += 1) {
+    const event = dated[i];
+    if (event === undefined) continue;
+    bump(event.key);
+    // Everything completed in the same second is one step, not several stacked points.
+    if (dated[i + 1]?.at.getTime() === event.at.getTime()) continue;
+    points.push({ t: event.at.toISOString(), v: valueOf(counts) });
+  }
+  // Carry the final value to the right edge, so a student who earned nothing this month
+  // still has a line running to today rather than stopping mid-chart.
+  points.push({ t: to.toISOString(), v: valueOf(counts) });
+  return points;
+}
+
+/** Single bucket: badges are just counted, whatever course they came from. */
+const ONE_BUCKET = 0;
+
+/** Newest value first: the legend reads as the standings. Nobody-yet sorts last. */
+function sortByLatest(series: { user: MoodleUser; points: { t: string; v: number }[] }[]): void {
+  const latest = (entry: (typeof series)[number]): number =>
+    entry.points[entry.points.length - 1]?.v ?? -1;
+  series.sort((a, b) => latest(b) - latest(a) || a.user.fullname.localeCompare(b.user.fullname));
+}
+
+/**
+ * Rebuilds every user's series from Moodle's own timestamps rather than from Moodify's
+ * samples, which is what makes "all time" reach back to before Moodify was installed.
+ *
+ * The one approximation: a past percentage is computed against *today's* number of
+ * completion-tracked activities. Moodle does not report when an activity was added to a
+ * course, so if the teacher added activities later, early percentages read a little
+ * lower than they appeared at the time. Progress toward the course as it stands now is
+ * the more useful reading for a leaderboard anyway.
+ */
+async function allTimeSeries(
+  config: WidgetConfig['progress_chart'],
+  userIds: readonly number[],
+  scopedCourseId: number | null,
+  now: Date,
+): Promise<{ from: Date; points: Map<number, { t: string; v: number }[]> }> {
+  type EventRow = { moodle_user_id: number; moodle_course_id: number; at: Date | null };
+
+  const events = new Map<number, { at: Date | null; key: number }[]>();
+  const push = (userId: number, event: { at: Date | null; key: number }): void => {
+    const list = events.get(userId);
+    if (list === undefined) events.set(userId, [event]);
+    else list.push(event);
+  };
+
+  // Tracked-activity counts per (user, course). Only courses with tracked completion
+  // appear, so they are exactly the courses that belong in the average.
+  const totals = new Map<number, Map<number, number>>();
+
+  if (config.metric === 'badges') {
+    const { rows } = await sql<{ moodle_user_id: number; at: Date | null }>(
+      `select bi.moodle_user_id, bi.date_issued as at
+         from badge_issued bi
+         join badges b on b.moodle_badge_id = bi.moodle_badge_id
+        where bi.moodle_user_id = any($1::int[])
+          and ($2::int is null or b.moodle_course_id = $2::int or b.moodle_course_id is null)`,
+      [userIds, scopedCourseId],
+    );
+    for (const row of rows) push(row.moodle_user_id, { at: row.at, key: ONE_BUCKET });
+  } else {
+    const { rows: totalRows } = await sql<{
+      moodle_user_id: number;
+      moodle_course_id: number;
+      activities_total: number;
+    }>(
+      `select moodle_user_id, moodle_course_id, activities_total
+         from completion_snapshot
+        where moodle_user_id = any($1::int[])
+          and ($2::int is null or moodle_course_id = $2::int)
+          and percent_complete is not null`,
+      [userIds, scopedCourseId],
+    );
+    for (const row of totalRows) {
+      if (row.activities_total <= 0) continue;
+      const byCourse = totals.get(row.moodle_user_id) ?? new Map<number, number>();
+      byCourse.set(row.moodle_course_id, row.activities_total);
+      totals.set(row.moodle_user_id, byCourse);
+    }
+
+    const { rows } = await sql<EventRow>(
+      `select moodle_user_id, moodle_course_id, completed_at as at
+         from activity_completion
+        where moodle_user_id = any($1::int[])
+          and ($2::int is null or moodle_course_id = $2::int)`,
+      [userIds, scopedCourseId],
+    );
+    for (const row of rows) {
+      // An activity in a course that tracks nothing today cannot be scored against a
+      // denominator, so it is left out rather than counted against zero.
+      if (totals.get(row.moodle_user_id)?.has(row.moodle_course_id) !== true) continue;
+      push(row.moodle_user_id, { at: row.at, key: row.moodle_course_id });
+    }
+  }
+
+  // The axis opens at the oldest thing that ever happened, or a day back when nothing has.
+  let earliest = Number.POSITIVE_INFINITY;
+  for (const list of events.values()) {
+    for (const event of list) {
+      if (event.at !== null) earliest = Math.min(earliest, event.at.getTime());
+    }
+  }
+  const from = new Date(
+    Number.isFinite(earliest) ? earliest : now.getTime() - 24 * 60 * 60 * 1000,
+  );
+
+  const points = new Map<number, { t: string; v: number }[]>();
+  for (const userId of userIds) {
+    const list = events.get(userId) ?? [];
+    if (config.metric === 'badges') {
+      points.set(
+        userId,
+        foldEvents(list, (counts) => counts.get(ONE_BUCKET) ?? 0, from, now),
+      );
+      continue;
+    }
+    const byCourse = totals.get(userId);
+    // No tracked course in scope means no percentage exists — same as `percent IS NULL`
+    // everywhere else, and an empty series drops the student off the chart.
+    if (byCourse === undefined || byCourse.size === 0) continue;
+    points.set(
+      userId,
+      foldEvents(
+        list,
+        (counts) => {
+          let sum = 0;
+          for (const [courseId, total] of byCourse) {
+            sum += Math.min(counts.get(courseId) ?? 0, total) / total;
+          }
+          // The unweighted mean of the per-course percentages, matching what
+          // completion_snapshot averaging does everywhere else in this file.
+          return Math.round((sum / byCourse.size) * 10000) / 100;
+        },
+        from,
+        now,
+      ),
+    );
+  }
+
+  return { from, points };
+}
 
 /** Matches HISTORY_RETENTION_DAYS in sync.ts — nothing older than this exists. */
 const MAX_WINDOW_MS = WINDOW_MS['7d'];
@@ -621,8 +797,14 @@ async function progressChart(
 
   const now = new Date();
   // 'auto' grows with the data — an install two hours old plots two hours — but can
-  // never reach past what sync.ts still retains.
-  const from = new Date(now.getTime() - (config.window === 'auto' ? MAX_WINDOW_MS : WINDOW_MS[config.window]));
+  // never reach past what sync.ts still retains. 'all' ignores this entirely and works
+  // out its own start from the oldest event Moodle knows about.
+  const from = new Date(
+    now.getTime() -
+      (config.window === 'auto' || config.window === 'all'
+        ? MAX_WINDOW_MS
+        : WINDOW_MS[config.window]),
+  );
 
   const { rows: userRows } = await sql<UserRow>(
     `select distinct u.moodle_user_id, u.fullname, u.email, u.avatar_image_path
@@ -636,7 +818,33 @@ async function progressChart(
     [scopedCourseId, config.includeStaff, config.excludeUserIds, config.userIds],
   );
   if (userRows.length === 0) {
-    return { type: 'progress_chart', metric: config.metric, from: from.toISOString(), to: now.toISOString(), series: [] };
+    return {
+      type: 'progress_chart',
+      metric: config.metric,
+      from: from.toISOString(),
+      to: now.toISOString(),
+      step: config.window === 'all',
+      series: [],
+    };
+  }
+
+  if (config.window === 'all') {
+    const all = await allTimeSeries(config, userRows.map((row) => row.moodle_user_id), scopedCourseId, now);
+    const series = userRows
+      .map((row) => ({
+        user: toUserWithAvatar(row, avatarBase),
+        points: all.points.get(row.moodle_user_id) ?? [],
+      }))
+      .filter((entry) => entry.points.length > 0);
+    sortByLatest(series);
+    return {
+      type: 'progress_chart',
+      metric: config.metric,
+      from: all.from.toISOString(),
+      to: now.toISOString(),
+      step: true,
+      series: config.userIds.length > 0 ? series : series.slice(0, config.limit),
+    };
   }
 
   const { rows: history } = await sql<HistoryRow>(
@@ -664,11 +872,7 @@ async function progressChart(
     user: toUserWithAvatar(row, avatarBase),
     points: points.get(row.moodle_user_id) ?? [],
   }));
-
-  // Newest value first: the legend reads as the standings. Nobody-yet sorts last.
-  const latest = (entry: (typeof series)[number]): number =>
-    entry.points[entry.points.length - 1]?.v ?? -1;
-  series.sort((a, b) => latest(b) - latest(a) || a.user.fullname.localeCompare(b.user.fullname));
+  sortByLatest(series);
 
   // An explicit pick of students is honoured in full; `limit` only trims "everyone".
   const trimmed = config.userIds.length > 0 ? series : series.slice(0, config.limit);
@@ -683,6 +887,8 @@ async function progressChart(
     metric: config.metric,
     from: start.toISOString(),
     to: now.toISOString(),
+    // Clock-driven samples, so the line may slope between them.
+    step: false,
     series: trimmed,
   };
 }
