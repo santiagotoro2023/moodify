@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import RGL, { WidthProvider, type Layout } from 'react-grid-layout';
 import type { Dashboard, Widget, WidgetData, WidgetDataError } from '@moodify/shared';
 import { ChevronDown, ChevronUp, GripVertical, Pencil, Settings2, Trash2 } from 'lucide-react';
-import { api, cn } from '@/lib/api';
+import { api, cn, errorMessage } from '@/lib/api';
 import { Button, Dialog } from '@/ui';
 import { WIDGET_META, WidgetBody, autoTitle } from '@/widgets';
 import { WidgetConfigForm } from '@/widgets/ConfigForm';
@@ -160,13 +160,8 @@ export function DashboardGrid({
 }) {
   const [titles, setTitles] = useState<Record<number, string>>({});
   const [configuring, setConfiguring] = useState<Widget | null>(null);
-  /** Signature of the last layout written, so an unchanged one is never re-saved. */
-  const saved = useRef<string | null>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => () => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-  }, []);
+  /** Set when saving the arrangement failed — losing it silently is the worst outcome. */
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const layout: Layout[] = dashboard.widgets.map((widget) => ({
     i: String(widget.id),
@@ -181,15 +176,19 @@ export function DashboardGrid({
   }));
 
   /**
-   * What the database already holds, in the same shape `persist` builds. Plain
-   * `widget.h` in both cases: persist substitutes the stored height back in for a
-   * collapsed widget, so the placeholder height never appears on either side.
+   * Writes the arrangement, immediately, on the two events that mean the user moved
+   * something. Everything about the old version of this was wrong in the same direction:
+   *
+   *  - It was debounced by 500ms, and the unmount cleanup cleared the pending timer. So
+   *    arranging widgets and clicking away inside half a second — which is what "put them
+   *    side by side, then leave the page" actually is — threw the arrangement away. A
+   *    drag-stop is one discrete action, not a stream; there was nothing to coalesce.
+   *  - It was also wired to onLayoutChange, which fires for react-grid-layout's own
+   *    bounds corrections and compaction, not just for edits. That is how a computed
+   *    layout ends up overwriting the one the user authored.
+   *  - It swallowed failures with `void`, so a rejected write looked exactly like a
+   *    successful one until the next reload.
    */
-  const storedSignature = dashboard.widgets
-    .map((widget) => `${widget.id}:${widget.x},${widget.y},${widget.w},${widget.h}`)
-    .sort()
-    .join('|');
-
   const persist = (next: Layout[]) => {
     if (readOnly) return;
 
@@ -205,21 +204,10 @@ export function DashboardGrid({
       };
     });
 
-    // react-grid-layout fires onLayoutChange on mount, and again once WidthProvider has
-    // measured the real container width. Comparing values rather than counting calls:
-    // a mount counter cannot tell the second of those from a genuine edit, and writing
-    // on page load is how a layout gets quietly replaced by whatever the grid computed.
-    const signature = items
-      .map((item) => `${item.id}:${item.x},${item.y},${item.w},${item.h}`)
-      .sort()
-      .join('|');
-    if (signature === (saved.current ?? storedSignature)) return;
-    saved.current = signature;
-
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      void api.put(`/api/dashboards/${dashboard.id}/layout`, { items });
-    }, 500);
+    api
+      .put(`/api/dashboards/${dashboard.id}/layout`, { items })
+      .then(() => setSaveError(null))
+      .catch((err: unknown) => setSaveError(errorMessage(err)));
   };
 
   const patch = async (widget: Widget, body: Record<string, unknown>) => {
@@ -237,6 +225,11 @@ export function DashboardGrid({
 
   return (
     <>
+      {saveError ? (
+        <p className="mb-3 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm">
+          Could not save the layout: {saveError}
+        </p>
+      ) : null}
       <GridLayout
         className="layout"
         layout={layout}
@@ -250,7 +243,6 @@ export function DashboardGrid({
         compactType="vertical"
         onDragStop={persist}
         onResizeStop={persist}
-        onLayoutChange={persist}
       >
         {dashboard.widgets.map((widget) => {
           const Icon = WIDGET_META[widget.type].icon;
