@@ -109,6 +109,24 @@ account holding every badge can be removed without deleting anything in Moodle.
 Without it Moodify only knows the host and port it is bound to, which is wrong the moment it sits
 behind a reverse proxy. Blank falls back to whatever address the browser is on.
 
+**The grid never moves a widget by itself.** Free placement: no gravity, no compaction, no
+breakpoints, and a drag cannot shove its neighbour aside. Where you drop a widget and how big you
+made it is exactly what gets stored and exactly what renders next time.
+
+This took three attempts to get right, so the reasoning is worth keeping. `compactType="vertical"`
+is gravity, and react-grid-layout applies it inside `synchronizeLayoutWithChildren` on *every*
+mount — not just on edits. A widget stored at `y=3` was pulled to `y=0` on every page load, and the
+next drag saved the pulled-up version. Verified directly against the library's own `compact()`:
+`{y:3},{y:3}` comes back `{y:0},{y:0}` under `"vertical"` and untouched under `null`. On top of that
+`WidthProvider` paints once at a hardcoded 1280px before it measures, so on a wider screen the first
+render was narrower than the page and drag distances were computed against the wrong column width —
+hence `measureBeforeMount`. And the save itself was debounced behind a 500ms timer that the unmount
+cleanup cancelled, so arranging widgets and immediately leaving the page discarded the arrangement.
+
+Layout writes now happen immediately, only on drag-stop and resize-stop, and the server returns 409
+if the update matched fewer widgets than were sent — a partly-saved arrangement looks exactly like
+the grid moving things by itself, so it is reported rather than swallowed.
+
 **Unconfigured widgets.** A widget is created with nothing selected and reports what it still
 needs. Requiring a course before a widget could be added made three of the five impossible to add
 at all.

@@ -341,7 +341,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
 
     // One round trip for the whole grid. The dashboard_id predicate is what stops a
     // caller repositioning widgets that belong to somebody else's dashboard.
-    await sql(
+    const updated = await sql(
       `update widgets as w
           set position_x = v.x, position_y = v.y, position_w = v.w, position_h = v.h
          from (select * from unnest($1::int[], $2::int[], $3::int[], $4::int[], $5::int[])
@@ -356,6 +356,16 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
         id,
       ],
     );
+
+    // A row that matched nothing means the arrangement was only partly saved — the rest
+    // silently reverts on the next load, which is indistinguishable from the grid moving
+    // things by itself. Say so instead: the client shows it above the grid.
+    if (updated.rowCount !== items.length) {
+      return reply.code(409).send({
+        error: `Saved ${updated.rowCount ?? 0} of ${items.length} widget positions — the dashboard may have changed in another tab. Reload and try again.`,
+      });
+    }
+
     await sql('update dashboards set updated_at = now() where id = $1', [id]);
     return { ok: true };
   });

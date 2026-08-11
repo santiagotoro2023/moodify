@@ -20,6 +20,9 @@ const GridLayout = WidthProvider(RGL);
  * underneath. That correction came straight back through onLayoutChange and was saved,
  * so merely opening the dashboard on a narrower window silently destroyed the arrangement
  * and the widths with it. A fixed column count makes that structurally impossible.
+ *
+ * The grid props below are the rest of that story: a widget goes where it is put and
+ * stays the size it was given. Nothing in this component may move a widget on its own.
  */
 const COLS = 12;
 const COLLAPSED_H = 1;
@@ -240,7 +243,21 @@ export function DashboardGrid({
         draggableHandle=".widget-drag-handle"
         isDraggable={!readOnly}
         isResizable={!readOnly}
-        compactType="vertical"
+        // Free placement. `compactType="vertical"` is gravity: react-grid-layout runs
+        // compact() inside synchronizeLayoutWithChildren on EVERY mount, so a widget
+        // stored at y=3 was dragged up to y=0 on every single page load, and the next
+        // drag then saved that. Put two widgets side by side one row down and reload:
+        // they move. That is the "snapping back". With null, a stored layout renders
+        // exactly as stored.
+        compactType={null}
+        // And with no gravity to resolve overlaps, a drag must not shove its neighbour
+        // out of the way either — an occupied cell simply refuses the drop.
+        preventCollision
+        // Render only once the container has been measured. Without this the first paint
+        // uses WidthProvider's hardcoded 1280px, so on a wider screen the grid draws
+        // narrower than the page and every drag distance is computed against the wrong
+        // column width.
+        measureBeforeMount
         onDragStop={persist}
         onResizeStop={persist}
       >
