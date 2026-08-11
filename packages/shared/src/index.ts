@@ -129,6 +129,12 @@ export const progressChartConfig = z.object({
   /** Empty = everyone in scope, trimmed to `limit` by the metric's current value. */
   userIds: z.array(userId).max(50).default([]),
   window: z.enum(CHART_WINDOWS).default('auto'),
+  /**
+   * Draw the whole chosen span even where there is no data yet, so the lines advance
+   * across a fixed axis instead of the axis shrinking to fit them. Ignored when the
+   * window is 'auto', which is the growing behaviour by definition.
+   */
+  fullWindow: z.boolean().default(false),
   limit: z.number().int().min(1).max(20).default(8),
   marker: z.enum(CHART_MARKERS).default('name'),
   /** Only meaningful when `marker` draws an avatar. Same three steps as badge icons. */

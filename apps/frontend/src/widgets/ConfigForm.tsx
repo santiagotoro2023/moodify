@@ -419,6 +419,22 @@ export function WidgetConfigForm({
               always shows the last seven days rather than emptying itself.
             </p>
           </div>
+          {config.window !== undefined && config.window !== 'auto' ? (
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor={id('fullWindow')} className="mb-0">
+                Draw the whole span
+                <span className="mt-0.5 block text-xs font-normal text-muted">
+                  Keeps the time axis fixed and lets the lines advance across it, instead
+                  of the axis shrinking to fit however much data exists.
+                </span>
+              </Label>
+              <Switch
+                id={id('fullWindow')}
+                checked={config.fullWindow === true}
+                onCheckedChange={(v) => set('fullWindow', v)}
+              />
+            </div>
+          ) : null}
           {chartUserPicker()}
           {chartUserIds.length === 0 ? (
             <div>

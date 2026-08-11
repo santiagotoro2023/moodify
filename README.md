@@ -132,7 +132,11 @@ the poll interval, and anything older than **7 days** is deleted. The window the
 outward on its own — a two-hour-old install charts two hours — up to a week, and then rolls forward
 a sample at a time rather than emptying itself. Both bounds are constants in `sync.ts`. Sampling is
 gated on the newest row in the table, not on a timer in the process, so restarting the container
-does not restart the cadence.
+does not restart the cadence. *Draw the whole span* turns the growing axis off: the chosen window is
+drawn in full and the lines advance across a fixed axis instead, which is what a wall display
+usually wants. Hovering the plot snaps a crosshair to the nearest real sample and reads every line's
+value there — snapped rather than interpolated, so the tooltip only shows numbers that were actually
+measured.
 
 **Profile pictures.** Synced from `core_enrol_get_enrolled_users` and cached locally, for the same
 reason badge icons are: `pluginfile.php` needs the web service token, so Moodle can never be

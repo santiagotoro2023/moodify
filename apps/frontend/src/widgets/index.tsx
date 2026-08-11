@@ -177,6 +177,24 @@ function markerRoom(marker: ChartMarker, avatar: number): number {
   return marker === 'both' ? avatar + 78 : 78;
 }
 
+/**
+ * The sample time closest to `targetMs`, or null if there are none. `stops` is sorted,
+ * so this could binary-search; a week holds 672 samples and a linear scan of that on
+ * mousemove is not something anyone will ever feel.
+ */
+function nearestStop(stops: string[], targetMs: number): string | null {
+  let best: string | null = null;
+  let bestGap = Infinity;
+  for (const stop of stops) {
+    const gap = Math.abs(new Date(stop).getTime() - targetMs);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = stop;
+    }
+  }
+  return best;
+}
+
 function axisLabel(iso: string, spanMs: number): string {
   const date = new Date(iso);
   return spanMs <= 36 * 60 * 60 * 1000
@@ -208,6 +226,8 @@ function ProgressChart({
   const hasData = plotted.length > 0;
 
   const [box, setBox] = useState({ w: 0, h: 0 });
+  /** Cursor position within the plot area, in px from its left edge. */
+  const [hover, setHover] = useState<number | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = hostRef.current;
@@ -258,12 +278,47 @@ function ProgressChart({
 
   const ticks = [0, 0.5, 1].map((fraction) => Math.round(maxValue * fraction));
 
+  const format = (value: number) =>
+    data.metric === 'percent' ? `${Math.round(value * 10) / 10}%` : String(value);
+
+  // Every distinct sample time across all lines: the crosshair snaps to these rather
+  // than reading a value off the interpolated line, so the tooltip only ever shows
+  // numbers that were actually measured.
+  const stops = [...new Set(plotted.flatMap((entry) => entry.points.map((p) => p.t)))].sort();
+  const hoveredAt = hover === null ? null : nearestStop(stops, t0 + (hover / plotW) * spanMs);
+  // Only lines that had reached that point by then — a student who enrolled on Friday
+  // has no Tuesday reading, and 0 would be a lie.
+  const readings =
+    hoveredAt === null
+      ? []
+      : plotted
+          .map((entry, index) => ({
+            name: entry.user.fullname,
+            color: LINE_COLORS[index % LINE_COLORS.length] ?? '#6366f1',
+            point: entry.points.find((p) => p.t === hoveredAt),
+          }))
+          .filter((row): row is typeof row & { point: { t: string; v: number } } =>
+            row.point !== undefined,
+          );
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       {/* overflow-hidden matters: the SVG is sized *from* this box, so letting it push
           the box wider would feed the ResizeObserver its own output. */}
-      <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden">
-        <svg width={width} height={height} className="block">
+      <div ref={hostRef} className="relative min-h-0 flex-1 overflow-hidden">
+        <svg
+          width={width}
+          height={height}
+          className="block"
+          onMouseMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const px = event.clientX - rect.left - padding.left;
+            // Outside the plot area (over the axis labels, or the room reserved for
+            // markers) there is nothing to read, so drop the crosshair entirely.
+            setHover(px >= 0 && px <= plotW ? px : null);
+          }}
+          onMouseLeave={() => setHover(null)}
+        >
           {ticks.map((tick) => (
             <g key={tick}>
               <line
@@ -287,9 +342,56 @@ function ProgressChart({
             {axisLabel(data.to, spanMs)}
           </text>
 
+          {/* Pass 1: every line. Drawn before every marker so that one student's line
+              cannot cut across another student's face — SVG has no z-index, paint
+              order is the only ordering there is. */}
           {plotted.map((entry, index) => {
             const color = LINE_COLORS[index % LINE_COLORS.length] ?? '#6366f1';
             const path = entry.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.t)},${y(p.v)}`).join(' ');
+            const last = entry.points[entry.points.length - 1];
+            if (last === undefined) return null;
+            return (
+              <g key={entry.user.id}>
+                {config.showArea ? (
+                  <path
+                    d={`${path} L${x(last.t)},${padding.top + plotH} L${x(entry.points[0]?.t ?? data.from)},${padding.top + plotH} Z`}
+                    fill={color}
+                    opacity={0.12}
+                  />
+                ) : null}
+                <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+              </g>
+            );
+          })}
+
+          {hoveredAt !== null ? (
+            <>
+              <line
+                x1={x(hoveredAt)}
+                x2={x(hoveredAt)}
+                y1={padding.top}
+                y2={padding.top + plotH}
+                stroke="currentColor"
+                strokeWidth={1}
+                className="text-white/25"
+              />
+              {readings.map((row) => (
+                <circle
+                  key={row.name}
+                  cx={x(row.point.t)}
+                  cy={y(row.point.v)}
+                  r={3.5}
+                  fill={row.color}
+                  stroke="var(--color-ground-soft)"
+                  strokeWidth={1.5}
+                />
+              ))}
+            </>
+          ) : null}
+
+          {/* Pass 2: the markers, on top of everything. */}
+          {plotted.map((entry, index) => {
+            const color = LINE_COLORS[index % LINE_COLORS.length] ?? '#6366f1';
             const last = entry.points[entry.points.length - 1];
             if (last === undefined) return null;
             const lastX = x(last.t);
@@ -301,22 +403,18 @@ function ProgressChart({
 
             return (
               <g key={entry.user.id}>
-                {config.showArea ? (
-                  <path
-                    d={`${path} L${lastX},${padding.top + plotH} L${x(entry.points[0]?.t ?? data.from)},${padding.top + plotH} Z`}
-                    fill={color}
-                    opacity={0.12}
-                  />
-                ) : null}
-                <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
                 {/* A single sample is a dot, not a line — without this it renders as nothing. */}
-                <circle cx={lastX} cy={lastY} r={3} fill={color} />
+                {drawAvatar ? null : <circle cx={lastX} cy={lastY} r={3} fill={color} />}
 
                 {drawAvatar ? (
                   <>
                     <clipPath id={`avatar-${entry.user.id}`}>
                       <circle cx={lastX} cy={lastY} r={avatar / 2} />
                     </clipPath>
+                    {/* Opaque disc underneath, always: the tint below is translucent and
+                        an image may have transparent corners, and either way the line
+                        must not show through the marker sitting on top of it. */}
+                    <circle cx={lastX} cy={lastY} r={avatar / 2} fill="var(--color-ground-soft)" />
                     {avatarUrl ? (
                       <image
                         href={avatarUrl}
@@ -358,6 +456,40 @@ function ProgressChart({
             );
           })}
         </svg>
+
+        {hoveredAt !== null && readings.length > 0 ? (
+          // Plain HTML rather than SVG text: wrapping, padding and a backdrop are free
+          // here and each costs a hand-measured rect in SVG. Flipped to the left of the
+          // cursor once it gets close to the right edge so it never leaves the widget.
+          <div
+            className="pointer-events-none absolute z-10 rounded-lg border border-edge bg-ground-soft/95 px-2 py-1.5 text-xs shadow-widget"
+            style={{
+              left: x(hoveredAt) + (x(hoveredAt) > width - 150 ? -8 : 8),
+              top: padding.top,
+              transform: x(hoveredAt) > width - 150 ? 'translateX(-100%)' : undefined,
+            }}
+          >
+            <p className="mb-1 text-[10px] text-muted">
+              {new Date(hoveredAt).toLocaleString(undefined, {
+                weekday: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </p>
+            <ul className="space-y-0.5">
+              {readings.map((row) => (
+                <li key={row.name} className="flex items-center gap-1.5 whitespace-nowrap">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: row.color }}
+                  />
+                  <span className="max-w-28 truncate">{row.name}</span>
+                  <span className="ml-auto pl-2 tabular-nums">{format(row.point.v)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
 
       {config.showLegend ? (

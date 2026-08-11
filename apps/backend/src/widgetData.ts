@@ -673,12 +673,15 @@ async function progressChart(
   // An explicit pick of students is honoured in full; `limit` only trims "everyone".
   const trimmed = config.userIds.length > 0 ? series : series.slice(0, config.limit);
 
+  // By default the axis starts where the data does, so a two-hour-old install is not
+  // 95% blank. With fullWindow the chosen span is drawn in full and the lines advance
+  // across it — which is the point of picking "last 7 days" for a wall display.
   const earliest = history[0]?.recorded_at;
+  const start = !config.fullWindow && earliest !== undefined && earliest > from ? earliest : from;
   return {
     type: 'progress_chart',
     metric: config.metric,
-    // The axis starts where the data does, so a two-hour-old install is not 95% blank.
-    from: (earliest !== undefined && earliest > from ? earliest : from).toISOString(),
+    from: start.toISOString(),
     to: now.toISOString(),
     series: trimmed,
   };
