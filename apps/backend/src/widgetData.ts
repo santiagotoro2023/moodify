@@ -1055,23 +1055,32 @@ async function completionRings(
   config: WidgetConfig['completion_rings'],
   avatarBase: string,
 ): Promise<WidgetData | WidgetDataError> {
-  if (config.courseIds.length === 0) {
-    return fail('No courses selected for this widget.');
-  }
-
+  // No selection = every visible course, as with `scope: all` elsewhere. Each person's
+  // ring is filtered to their own enrolments below, so "all courses" is not the mess it
+  // would be if everyone got every segment.
+  const all = config.courseIds.length === 0;
   const { rows: courseRows } = await sql<CourseRow>(
     `select moodle_course_id, shortname, fullname, visible
        from courses
-      where moodle_course_id = any($1::int[])`,
-    [config.courseIds],
+      where ($2::boolean and visible = true) or moodle_course_id = any($1::int[])
+      order by fullname asc`,
+    [config.courseIds, all],
   );
+  const byId = new Map(courseRows.map((row) => [row.moodle_course_id, toCourse(row)]));
   // Configured order is the segment order and the legend order, so the colours stay put
   // when a course is added; SQL order would reshuffle the whole ring.
-  const byId = new Map(courseRows.map((row) => [row.moodle_course_id, toCourse(row)]));
-  const courses = config.courseIds
-    .map((id) => byId.get(id))
-    .filter((course): course is Course => course !== undefined);
-  if (courses.length === 0) return fail(COURSE_GONE);
+  const courses = all
+    ? courseRows.map(toCourse)
+    : config.courseIds
+        .map((id) => byId.get(id))
+        .filter((course): course is Course => course !== undefined);
+  if (courses.length === 0) {
+    return fail(
+      all
+        ? 'No visible courses have been synced from Moodle yet.'
+        : 'The selected courses are no longer in Moodle. Pick others in the widget settings.',
+    );
+  }
   const courseIds = courses.map((course) => course.id);
 
   const { rows: userRows } = await sql<UserRow>(

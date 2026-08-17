@@ -174,7 +174,11 @@ export type RingMarker = (typeof RING_MARKERS)[number];
  * activity turns red, and a tick marks where the person's cohort should be by today.
  */
 export const completionRingsConfig = z.object({
-  /** Segments, in this order. Each gets an equal slice of the circle. */
+  /**
+   * Segments, in this order. Empty means every visible course, matching the `scope: all`
+   * default the other widgets use — combined with the per-person enrolment filter that
+   * is already the useful default, so a freshly dropped widget shows something real.
+   */
   courseIds: z.array(courseId).max(12).default([]),
   /** Whose rings are drawn. Empty = every student enrolled in the selected courses. */
   cohortIds: z.array(z.number().int().positive()).max(20).default([]),
@@ -269,12 +273,16 @@ export interface Cohort {
   memberCount: number;
 }
 
-/** One completion-trackable activity in a course, for the deadline picker. */
+/** One completion-trackable activity in a course, for the task picker. */
 export interface CourseActivity {
   courseId: number;
   cmid: number;
   name: string;
   modname: string;
+  /** Course section, already "Parent › Subsection" where Moodle nests them. */
+  section: string;
+  /** Moodle's own ordering of that section within the course. */
+  sectionOrder: number;
 }
 
 export interface Badge {
@@ -598,6 +606,9 @@ export interface Deadline extends DeadlineRule {
   cmid: number;
   /** From course_activities; falls back to "Activity <cmid>" if the sync has not seen it. */
   activityName: string;
+  /** Course section the activity is in — the Tasks page groups by it. */
+  section: string;
+  sectionOrder: number;
   /** null = the task applies to every student in the course, not one cohort. */
   cohortId: number | null;
   cohortName: string | null;
@@ -605,6 +616,21 @@ export interface Deadline extends DeadlineRule {
   dueAt: string | null;
   /** The next occurrence (ISO), or null for a one-off date that has already passed. */
   nextDueAt: string | null;
+}
+
+/**
+ * dd/mm/yyyy, everywhere a date is shown.
+ *
+ * Not toLocaleDateString: that follows the browser's locale, so the same dashboard on a
+ * machine set to en-US reads 09/07/2026 as 7 September and the reader has no way to tell.
+ * A deadline is not a place to be ambiguous about which number is the month.
+ */
+export function formatDay(value: Date | string): string {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return '—';
+  const day = `${date.getDate()}`.padStart(2, '0');
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  return `${day}/${month}/${date.getFullYear()}`;
 }
 
 /** End of a yyyy-mm-dd day in local time — "by the 15th" includes all of the 15th. */
@@ -670,7 +696,10 @@ export function deadlineNextDueAt(rule: DeadlineRule, now: Date): Date | null {
 }
 
 export function describeDeadlineRule(rule: DeadlineRule): string {
-  if (rule.date != null) return endOfDay(rule.date)?.toLocaleDateString() ?? rule.date;
+  if (rule.date != null) {
+    const at = endOfDay(rule.date);
+    return at === null ? rule.date : formatDay(at);
+  }
   if (!isYearly(rule)) return 'no date set';
   const which = rule.nth < 0 ? 'last' : ['first', 'second', 'third', 'fourth', 'fifth'][rule.nth - 1];
   return `${which ?? rule.nth} ${WEEKDAY_NAMES[rule.weekday] ?? '?'} in ${MONTH_NAMES[rule.month - 1] ?? '?'}, yearly`;

@@ -180,6 +180,18 @@ const LINE_COLORS = [
   '#38bdf8', '#a855f7', '#84cc16', '#fb923c',
 ];
 
+/** The one red in the app. In a ring it means overdue and nothing else. */
+const OVERDUE_COLOR = '#f43f5e';
+
+/**
+ * Ring segment colours: the line palette with the red taken out.
+ *
+ * A red segment on a ring means a missed deadline. If the fourth course were simply
+ * coloured red, a class where everyone is on track would look like a class where
+ * everyone has failed the fourth course, and there would be no way to tell the two apart.
+ */
+const RING_COLORS = LINE_COLORS.filter((color) => color !== OVERDUE_COLOR);
+
 /** Diameter of the avatar marker, in px. Same three steps as the badge icons. */
 const AVATAR_PX: Record<BadgeSize, number> = { small: 20, medium: 30, large: 44 };
 
@@ -1009,7 +1021,7 @@ function PersonRing({
           const span = to - from;
           // Colour comes from the course, not from where it lands in this person's ring:
           // someone enrolled in only the third course must still get the third colour.
-          const color = segment.overdue > 0 ? '#f43f5e' : colorOf(segment.course.id);
+          const color = segment.overdue > 0 ? OVERDUE_COLOR : colorOf(segment.course.id);
           const fraction = (segment.percent ?? 0) / 100;
           const targetAngle =
             segment.targetPercent === null ? null : from + span * (segment.targetPercent / 100);
@@ -1095,7 +1107,7 @@ function PersonRing({
                   cx={center - blockW / 2 + centreFont * 0.3}
                   cy={y}
                   r={centreFont * 0.22}
-                  fill={segment.overdue > 0 ? '#f43f5e' : colorOf(segment.course.id)}
+                  fill={segment.overdue > 0 ? OVERDUE_COLOR : colorOf(segment.course.id)}
                 />
                 <text
                   x={center - blockW / 2 + centreFont}
@@ -1132,7 +1144,7 @@ function PersonRing({
 function CompletionRings({ data, config }: { data: CompletionRingsData; config: RingOptions }) {
   const instance = useId().replace(/:/g, '');
   const colors = new Map(
-    data.courses.map((course, index) => [course.id, LINE_COLORS[index % LINE_COLORS.length] ?? '#38bdf8']),
+    data.courses.map((course, index) => [course.id, RING_COLORS[index % RING_COLORS.length] ?? '#38bdf8']),
   );
   const colorOf = (courseId: number) => colors.get(courseId) ?? '#38bdf8';
 

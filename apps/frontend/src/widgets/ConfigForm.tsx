@@ -221,7 +221,8 @@ export function WidgetConfigForm({
       <Label>Courses in the ring</Label>
       <p className="mb-2 text-xs text-muted">
         Each course becomes one segment, in the order you tick them — which is also the
-        order of the colours.
+        order of the colours. Tick nothing for every visible course; either way a person's
+        ring only shows the courses they are actually enrolled in.
       </p>
       {courses.length === 0 ? (
         <p className="text-xs text-muted">No courses synced yet.</p>
@@ -657,9 +658,8 @@ export function WidgetConfigForm({
             <Label htmlFor={id('showTarget')} className="mb-0">
               Show the target mark
               <span className="mt-0.5 block text-xs font-normal text-muted">
-                A tick inside each segment for how far the person's cohort should be by
-                today, from the deadlines in Settings. Nothing is drawn for a course with
-                no deadline.
+                A tick inside each segment for how far the person should be by today,
+                from the Tasks page. Nothing is drawn for a course with no tasks.
               </span>
             </Label>
             <Switch

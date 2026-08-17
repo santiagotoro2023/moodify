@@ -4,6 +4,7 @@ import {
   MONTH_NAMES,
   WEEKDAY_NAMES,
   describeDeadlineRule,
+  formatDay,
   type Cohort,
   type Course,
   type CourseActivity,
@@ -24,7 +25,37 @@ import { Button, Card, EmptyState, ErrorNote, Input, Label, Select, Spinner } fr
  * A task with no cohort applies to everyone enrolled in the course. Overdue tasks turn
  * the completion bars and ring segments red; the ones already due set the target mark on
  * the Progress rings widget.
+ *
+ * Tasks are listed and picked in Moodle's own course-section order, subsections included,
+ * because that is the order the person setting them up sees in Moodle itself.
  */
+
+/**
+ * Groups consecutive items under a heading. Both callers arrive already sorted the way
+ * they want to be grouped — by section order from Moodle, not alphabetically — so this
+ * walks the list rather than bucketing it, and the order survives.
+ */
+function groupRuns<T>(items: readonly T[], keyOf: (item: T) => string): [string, T[]][] {
+  const groups: [string, T[]][] = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last[0] === key) last[1].push(item);
+    else groups.push([key, [item]]);
+  }
+  return groups;
+}
+
+const groupBySection = (activities: readonly CourseActivity[]) =>
+  groupRuns(activities, (activity) => activity.section);
+
+const groupByCourseSection = (deadlines: readonly Deadline[]) =>
+  groupRuns(deadlines, (deadline) =>
+    deadline.section === ''
+      ? deadline.courseName
+      : `${deadline.courseName} › ${deadline.section}`,
+  );
+
 export default function Tasks() {
   const [deadlines, setDeadlines] = useState<Deadline[] | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -149,10 +180,14 @@ export default function Tasks() {
                     ? 'No activities synced for this course'
                     : 'Select an activity…'}
               </option>
-              {activities.map((activity) => (
-                <option key={activity.cmid} value={activity.cmid}>
-                  {activity.name}
-                </option>
+              {groupBySection(activities).map(([section, items]) => (
+                <optgroup key={section} label={section === '' ? 'Course' : section}>
+                  {items.map((activity) => (
+                    <option key={activity.cmid} value={activity.cmid}>
+                      {activity.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </Select>
           </div>
@@ -253,39 +288,50 @@ export default function Tasks() {
           hint="Nothing is being tracked against a date, so nothing can be overdue."
         />
       ) : (
-        <ul className="space-y-2">
-          {deadlines.map((deadline) => (
-            <li key={deadline.id}>
-              <Card className="flex items-start gap-3 text-sm">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{deadline.activityName}</p>
-                  <p className="truncate text-xs text-muted">
-                    {deadline.courseName} · {deadline.cohortName ?? 'Everyone'} ·{' '}
-                    {describeDeadlineRule(deadline)}
-                  </p>
-                  <p className={cn('text-xs', deadline.dueAt === null ? 'text-muted' : 'text-warn')}>
-                    {deadline.dueAt === null
-                      ? deadline.nextDueAt === null
-                        ? 'No date'
-                        : `Due ${new Date(deadline.nextDueAt).toLocaleDateString()}`
-                      : `Due since ${new Date(deadline.dueAt).toLocaleDateString()}`}
-                    {deadline.dueAt !== null && deadline.nextDueAt !== null
-                      ? ` · next ${new Date(deadline.nextDueAt).toLocaleDateString()}`
-                      : ''}
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Delete task"
-                  onClick={() => void remove(deadline.id)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </Card>
-            </li>
-          ))}
-        </ul>
+        groupByCourseSection(deadlines).map(([heading, items]) => (
+          <section key={heading} className="space-y-2">
+            <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-muted">
+              {heading}
+            </h2>
+            <ul className="space-y-2">
+              {items.map((deadline) => (
+                <li key={deadline.id}>
+                  <Card className="flex items-start gap-3 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{deadline.activityName}</p>
+                      <p className="truncate text-xs text-muted">
+                        {deadline.cohortName ?? 'Everyone'} · {describeDeadlineRule(deadline)}
+                      </p>
+                      <p
+                        className={cn(
+                          'text-xs',
+                          deadline.dueAt === null ? 'text-muted' : 'text-warn',
+                        )}
+                      >
+                        {deadline.dueAt === null
+                          ? deadline.nextDueAt === null
+                            ? 'No date'
+                            : `Due ${formatDay(deadline.nextDueAt)}`
+                          : `Due since ${formatDay(deadline.dueAt)}`}
+                        {deadline.dueAt !== null && deadline.nextDueAt !== null
+                          ? ` · next ${formatDay(deadline.nextDueAt)}`
+                          : ''}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Delete task"
+                      onClick={() => void remove(deadline.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </Card>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
       )}
     </div>
   );

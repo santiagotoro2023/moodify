@@ -659,6 +659,10 @@ export interface CourseModule {
   cmid: number;
   name: string;
   modname: string;
+  /** Section it sits in — "Grundlagen › Woche 2" when that is a subsection. */
+  section: string;
+  /** Position of that section in the course, so a list can follow Moodle's own order. */
+  sectionOrder: number;
 }
 
 /**
@@ -678,17 +682,49 @@ export async function getCourseContents(
   courseId: number,
 ): Promise<CourseModule[]> {
   const raw = await callWs<unknown>(conn, 'core_course_get_contents', { courseid: courseId });
+  const sections = Array.isArray(raw) ? raw : [];
+
+  // Moodle 4.5 subsections are not nested in the response: a subsection comes back as its
+  // own top-level section flagged `component: mod_subsection`, pointing at the
+  // mod_subsection instance that hosts it. Mapping that instance id back to the section
+  // it lives in is the only way to say "Grundlagen › Woche 2" instead of a bare "Woche 2"
+  // that could be any of four. Older Moodle has none of this and the map stays empty.
+  const parentOf = new Map<number, string>();
+  for (const section of sections) {
+    const sectionName = readString(section, 'name') ?? '';
+    for (const entry of readArray(section, 'modules')) {
+      if (readString(entry, 'modname') !== 'subsection') continue;
+      const instance = readNumber(entry, 'instance');
+      if (instance !== null) parentOf.set(instance, sectionName);
+    }
+  }
+
   const modules: CourseModule[] = [];
-  for (const section of Array.isArray(raw) ? raw : []) {
+  let order = 0;
+  for (const section of sections) {
+    order += 1;
+    const name = readString(section, 'name') ?? '';
+    const itemid = readNumber(section, 'itemid');
+    const parent =
+      readString(section, 'component') === 'mod_subsection' && itemid !== null
+        ? parentOf.get(itemid)
+        : undefined;
+    const label = parent !== undefined && parent !== '' ? `${parent} › ${name}` : name;
+
     for (const entry of readArray(section, 'modules')) {
       const cmid = readNumber(entry, 'id');
       if (cmid === null) continue;
+      const modname = readString(entry, 'modname') ?? 'unknown';
+      // A subsection is a container, not something anyone completes.
+      if (modname === 'subsection') continue;
       const completion = readNumber(entry, 'completion');
       if (completion === 0) continue;
       modules.push({
         cmid,
         name: readString(entry, 'name') ?? `Activity ${cmid}`,
-        modname: readString(entry, 'modname') ?? 'unknown',
+        modname,
+        section: label,
+        sectionOrder: order,
       });
     }
   }

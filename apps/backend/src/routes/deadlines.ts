@@ -11,12 +11,12 @@ import { requireAdmin } from '../auth.ts';
 import { sql } from '../db.ts';
 
 /**
- * Deadline administration: "this activity must be done by the first Monday in
- * September, for this cohort".
+ * Task administration: "this activity must be done by this date", optionally narrowed to
+ * one cohort.
  *
- * Read-only against Moodle — the cohorts and activity names come from the sync, and
- * nothing here is written back. The occurrence dates are computed on read (see
- * deadlineDueAt in packages/shared) so a rule rolls into the next year by itself.
+ * Read-only against Moodle — cohorts, activity names and course sections all come from
+ * the sync, and nothing here is written back. Occurrence dates are computed on read (see
+ * deadlineDueAt in packages/shared) so a yearly rule rolls into the next year by itself.
  */
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
@@ -58,6 +58,8 @@ type DeadlineRow = {
   course_name: string;
   cmid: number;
   activity_name: string;
+  section: string;
+  section_order: number;
   moodle_cohort_id: number | null;
   cohort_name: string | null;
   due_date: Date | null;
@@ -90,6 +92,8 @@ function toDeadline(row: DeadlineRow, now: Date): Deadline {
     courseName: row.course_name,
     cmid: row.cmid,
     activityName: row.activity_name,
+    section: row.section,
+    sectionOrder: row.section_order,
     cohortId: row.moodle_cohort_id,
     cohortName: row.cohort_name,
     ...rule,
@@ -126,11 +130,20 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
     const parsed = courseIdParam.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid course id.' });
 
-    const { rows } = await sql<{ cmid: number; name: string; modname: string }>(
-      `select cmid, name, modname
+    // Moodle's own section order, then the activity name inside it: the picker groups by
+    // section, and a group whose rows are alphabetical but whose headings are not is
+    // harder to scan than either done consistently.
+    const { rows } = await sql<{
+      cmid: number;
+      name: string;
+      modname: string;
+      section: string;
+      section_order: number;
+    }>(
+      `select cmid, name, modname, section, section_order
          from course_activities
         where moodle_course_id = $1
-        order by name asc`,
+        order by section_order asc, name asc`,
       [parsed.data.courseId],
     );
     const activities: CourseActivity[] = rows.map((row) => ({
@@ -138,6 +151,8 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
       cmid: row.cmid,
       name: row.name,
       modname: row.modname,
+      section: row.section,
+      sectionOrder: row.section_order,
     }));
     return activities;
   });
@@ -146,7 +161,7 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
     const { rows } = await sql<DeadlineRow>(
       // Left join on cohorts: a task with no cohort applies to the whole course.
       `select d.id, d.moodle_course_id, co.fullname as course_name,
-              d.cmid, ca.name as activity_name,
+              d.cmid, ca.name as activity_name, ca.section, ca.section_order,
               d.moodle_cohort_id, ch.name as cohort_name,
               d.due_date, d.month, d.weekday, d.nth, d.created_at
          from deadlines d
@@ -154,7 +169,8 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
          join course_activities ca
            on ca.moodle_course_id = d.moodle_course_id and ca.cmid = d.cmid
          left join cohorts ch on ch.moodle_cohort_id = d.moodle_cohort_id
-        order by co.fullname asc, ca.name asc, ch.name asc nulls first`,
+        order by co.fullname asc, ca.section_order asc, ca.section asc,
+                 ca.name asc, ch.name asc nulls first`,
     );
     const now = new Date();
     return rows.map((row) => toDeadline(row, now));
