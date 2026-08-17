@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { connectionRoutes } from './connection.ts';
 import { dashboardRoutes } from './dashboards.ts';
 import { deadlineRoutes } from './deadlines.ts';
+import { notificationRoutes } from './notifications.ts';
 import { publicRoutes } from './public.ts';
 import { setupRoutes } from './setup.ts';
 
@@ -20,5 +21,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(connectionRoutes);
   await app.register(dashboardRoutes);
   await app.register(deadlineRoutes);
+  await app.register(notificationRoutes);
   await app.register(publicRoutes);
 }

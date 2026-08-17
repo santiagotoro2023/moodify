@@ -9,6 +9,7 @@ import {
 import { CheckCircle2, RefreshCw } from 'lucide-react';
 import { api, cn, errorMessage, relativeTime } from '@/lib/api';
 import { Button, Card, ErrorNote, Input, Label, Select, Spinner } from '@/ui';
+import { NotificationsCard } from '@/components/NotificationsCard';
 
 const STATUS_STYLES: Record<string, string> = {
   ok: 'border-good/40 bg-good/10 text-good',
@@ -59,6 +60,7 @@ export default function Settings() {
 
       <ConnectionCard connection={connection} onChanged={load} />
       <SyncCard connection={connection} onChanged={load} />
+      <NotificationsCard />
       <AccessCard publicBaseUrl={publicBaseUrl} onChanged={load} />
       <BrandingCard logoUrl={logoUrl} logoHeight={logoHeight} onChanged={load} />
     </div>

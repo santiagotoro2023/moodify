@@ -463,11 +463,14 @@ export interface RingSegment {
   /** null = the course tracks no activities; the segment is drawn as an empty track. */
   percent: number | null;
   /**
-   * How much of this course the person should have finished by today, from the
-   * deadlines set for their cohorts. null when the course has no deadline in force.
+   * Where the fill would reach with nothing overdue — completed work plus the work whose
+   * date has passed. Null when nothing is overdue, since the mark would then sit exactly
+   * on the end of the fill.
    */
   targetPercent: number | null;
   overdue: number;
+  /** Names of the overdue activities, newest-first is not meaningful so A-Z. */
+  overdueActivities: string[];
 }
 
 export interface CompletionRingsEntry {
@@ -480,6 +483,8 @@ export interface CompletionRingsEntry {
   segments: RingSegment[];
   /** Total overdue across the segments, for sorting and the tile's status line. */
   overdue: number;
+  /** Tasks finished before their date came round — the only honest reading of "ahead". */
+  earlyDone: number;
   /** Mean of the tracked segments. Used for sorting, not shown as a headline. */
   percent: number | null;
   /** Empty unless the widget has `showBadges` on. */
@@ -510,6 +515,42 @@ export type WidgetData =
 export interface WidgetDataError {
   type: 'error';
   message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Email notifications
+// ---------------------------------------------------------------------------
+
+/** Placeholders a rule's subject and body may use. Anything else is left as typed. */
+export const TEMPLATE_FIELDS = ['name', 'activity', 'course', 'due', 'days'] as const;
+
+export interface SmtpState {
+  enabled: boolean;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  /** Masked for display only — the password itself never leaves the backend (§9.5). */
+  passwordSet: boolean;
+  fromName: string;
+  fromEmail: string;
+  adminEmail: string;
+  dailyReport: boolean;
+  dailyReportHour: number;
+  lastSentAt: string | null;
+  lastError: string | null;
+  /** Students Moodle gave no address for; they are skipped rather than guessed at. */
+  usersWithoutEmail: string[];
+}
+
+export interface NotificationRuleDto {
+  id: number;
+  kind: 'before' | 'overdue';
+  /** Days ahead of the due date, for `kind: 'before'`. Null for `overdue`. */
+  daysBefore: number | null;
+  subject: string;
+  body: string;
+  enabled: boolean;
 }
 
 /** Web Service functions the Moodle-side External Service must expose (§9.1). */

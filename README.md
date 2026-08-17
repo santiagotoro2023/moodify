@@ -258,16 +258,43 @@ piece. The per-course rows under each ring are a grid with fixed side columns pa
 busiest person's course count, so the numbers line up across every tile and the badges start at the
 same height: a table read across a wall, without the ruled lines.
 
-The tick inside a segment is the target: the share of that course's activities whose deadline for
-that person has already passed. No task in a course means no tick, not a tick at zero. Under the
-name, one line says the rest — overdue count if there is one, otherwise how far ahead of or behind
-the plan they are, with five points of slack either way because a target computed from whole
-activities moves in jumps.
+The tick inside a segment marks where the fill would reach with nothing overdue: work already done
+plus work whose date has passed. The gap between fill and tick is exactly the missing work, and the
+tick is therefore always ahead of the fill or absent. The first version divided *due deadlines* by
+the course's activity count, which put one missed task among forty activities at 2.5% — at the very
+start of the segment, behind the fill, for the person who had missed it. Completion and deadline
+compliance are different axes; projecting one onto the other produced a number that meant nothing.
+
+Under the name, overdue activities are listed by name rather than counted: "1 overdue activity"
+says a problem exists and nothing about what to do. When nothing is overdue the line reads "on
+track", or names how much was finished before its date came round. The old percentage "ahead of
+plan / behind plan" is gone with the target it was derived from — with per-activity dates there is
+no pace to be ahead of, only work done early.
 
 Percentages sit in the middle of the ring, one line per course. Switching the ring to profile
 pictures gives that space to the face and moves the percentages to a list underneath, so no
 information is traded away for the nicer look. Badges can be listed under each ring too, for a
 board that shows everything about a person on one tile.
+
+**Email reminders.** Addresses come from Moodle and are never invented: a student Moodle gave no
+address for is skipped, and Settings names them, because a reminder nobody receives is worse than
+one that was never configured. Rules are global — "5 days before" is written once and applies to
+every task, and several lead-time rules can coexist. The overdue rule fires once per occurrence.
+
+`notification_log` is what makes "once" true across restarts, manual re-syncs and the fifteen-minute
+poll. Its key includes the due date, not just the task: a yearly task comes round again next
+September and has to be allowed to notify again, and the date is what makes this year's reminder a
+different thing from last year's. Rows are written only for mail that actually left, so a send that
+failed is retried — a duplicate is a smaller problem than a reminder nobody ever gets.
+
+Several activities falling due on the same day for the same person become one message; different
+days stay separate, because `{due}` in a template has to mean something. Days are counted midnight
+to midnight rather than by subtracting instants — a deadline is stored as the *end* of its day, so
+the raw difference would say "in 4 days" on the calendar's third.
+
+The SMTP password is encrypted at rest with the same key as the Moodle token, is never logged, and
+is write-only from the UI's side. A mail server that is down never fails a sync or raises the Moodle
+banner; the error lands in Settings.
 
 **Profile picture resolution.** `core_enrol_get_enrolled_users` always reports the `f1` variant,
 100px, which is visibly soft once a ring fills a wide column. The avatar download asks for `f3`

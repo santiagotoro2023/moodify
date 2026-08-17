@@ -954,28 +954,25 @@ function arcPath(cx: number, cy: number, r: number, from: number, to: number): s
 }
 
 /**
- * The one-line verdict under the name. Overdue outranks everything — it is the only
- * hard fact here; ahead/behind is measured against the deadlines that exist, so a course
- * with none contributes nothing rather than dragging the average toward zero.
+ * The verdict under the name.
  *
- * Five points of slack either way: a target computed from whole activities moves in
- * jumps, and calling someone "behind" for being 1% off a step function is noise.
+ * Overdue outranks everything and is spelled out: the activities by name, because "1
+ * overdue activity" tells you a problem exists and nothing about what to do.
+ *
+ * The old percentage-based "ahead of plan / behind plan" is gone. It was derived from a
+ * target that projected deadline compliance onto the completion axis, which is not a
+ * scale anything can be ahead on — with per-activity dates there is no pace to beat.
+ * What remains is true and checkable: work finished before its date came round.
  */
 function ringStatus(entry: CompletionRingsEntry): { text: string; className: string } | null {
-  if (entry.overdue > 0) {
-    return { text: overdueLabel(entry.overdue), className: 'text-bad' };
+  if (entry.overdue > 0) return null; // the list renders instead
+  if (entry.earlyDone > 0) {
+    return {
+      text: `${entry.earlyDone} done ahead of time`,
+      className: 'text-good',
+    };
   }
-  const measured = entry.segments.filter(
-    (segment) => segment.targetPercent !== null && segment.percent !== null,
-  );
-  if (measured.length === 0) return null;
-
-  const delta =
-    measured.reduce((sum, s) => sum + ((s.percent ?? 0) - (s.targetPercent ?? 0)), 0) /
-    measured.length;
-  if (delta >= 5) return { text: `${Math.round(delta)}% ahead of plan`, className: 'text-good' };
-  if (delta <= -5) return { text: `${Math.round(-delta)}% behind plan`, className: 'text-warn' };
-  return { text: 'On plan', className: 'text-muted' };
+  return { text: 'On track', className: 'text-muted' };
 }
 
 /**
@@ -1060,6 +1057,11 @@ function PersonRing({
   const gap = Math.min(0.12, slice * 0.14);
 
   const withAvatar = options.marker === 'avatar' || options.marker === 'both';
+  // Flattened across the segments and de-duplicated: the same activity cannot be in two
+  // courses, but a person reachable through two cohorts would otherwise be listed twice.
+  const overdueActivities = [
+    ...new Set(entry.segments.flatMap((segment) => segment.overdueActivities)),
+  ];
   const avatar = entry.user.avatarUrl ? assetUrl(entry.user.avatarUrl) : null;
   const status = ringStatus(entry);
 
@@ -1200,11 +1202,24 @@ function PersonRing({
           {entry.user.fullname}
         </p>
       )}
-      {/* Always rendered, empty when there is nothing to say: a status line that appears
+      {/* Always rendered, blank when there is nothing to say: a status line that appears
           on some tiles and not others shifts everything below it out of alignment. */}
-      <p className={cn('text-[11px]', status?.className ?? 'text-muted')}>
-        {status?.text ?? '\u00a0'}
-      </p>
+      {entry.overdue > 0 ? (
+        <div className="w-full text-left text-[11px] text-bad">
+          <p className="font-medium">Overdue:</p>
+          <ul className="list-inside list-disc">
+            {overdueActivities.map((name) => (
+              <li key={name} className="truncate" title={name}>
+                {name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className={cn('text-[11px]', status?.className ?? 'text-muted')}>
+          {status?.text ?? '\u00a0'}
+        </p>
+      )}
       {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} rows={rows} /> : null}
       {options.showBadges ? (
         <div className="mt-3 w-full">

@@ -14,12 +14,14 @@
     "@fastify/static": "^8.0.3",
     "@moodify/shared": "*",
     "fastify": "^5.1.0",
+    "nodemailer": "^9.0.5",
     "pg": "^8.13.1",
     "tsx": "^4.19.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.11.10"
   }
 }

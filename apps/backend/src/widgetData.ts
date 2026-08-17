@@ -194,6 +194,7 @@ type DeadlineRow = {
   moodle_course_id: number;
   moodle_user_id: number;
   cmid: number;
+  name: string;
   due_date: Date | null;
   month: number | null;
   weekday: number | null;
@@ -209,6 +210,10 @@ export interface DeadlineFacts {
   due: number;
   /** Of the due ones, the ones still not completed. */
   overdue: number;
+  /** Not due yet and already done — the only honest reading of "ahead". */
+  earlyDone: number;
+  /** Names of the overdue activities, for the list on a ring tile. */
+  overdueNames: string[];
 }
 
 /**
@@ -222,13 +227,17 @@ export function foldDeadlines(
     courseId: number;
     userId: number;
     cmid: number;
+    name: string;
     rule: DeadlineRule;
     createdAt: Date;
     completed: boolean;
   }[],
   now: Date,
 ): Map<string, DeadlineFacts> {
-  const perActivity = new Map<string, { pair: string; due: Date | null; completed: boolean }>();
+  const perActivity = new Map<
+    string,
+    { pair: string; name: string; due: Date | null; completed: boolean }
+  >();
   for (const row of rows) {
     const key = `${row.courseId}:${row.userId}:${row.cmid}`;
     const due = deadlineDueAt(row.rule, row.createdAt, now);
@@ -236,6 +245,7 @@ export function foldDeadlines(
     if (seen === undefined) {
       perActivity.set(key, {
         pair: `${row.courseId}:${row.userId}`,
+        name: row.name,
         due,
         completed: row.completed,
       });
@@ -246,18 +256,31 @@ export function foldDeadlines(
 
   const out = new Map<string, DeadlineFacts>();
   for (const item of perActivity.values()) {
-    const facts = out.get(item.pair) ?? { total: 0, due: 0, overdue: 0 };
+    const facts =
+      out.get(item.pair) ?? { total: 0, due: 0, overdue: 0, earlyDone: 0, overdueNames: [] };
     facts.total += 1;
-    if (item.due !== null) {
+    if (item.due === null) {
+      if (item.completed) facts.earlyDone += 1;
+    } else {
       facts.due += 1;
-      if (!item.completed) facts.overdue += 1;
+      if (!item.completed) {
+        facts.overdue += 1;
+        facts.overdueNames.push(item.name);
+      }
     }
     out.set(item.pair, facts);
   }
+  for (const facts of out.values()) facts.overdueNames.sort((a, b) => a.localeCompare(b));
   return out;
 }
 
-const NO_DEADLINES: DeadlineFacts = { total: 0, due: 0, overdue: 0 };
+const NO_DEADLINES: DeadlineFacts = {
+  total: 0,
+  due: 0,
+  overdue: 0,
+  earlyDone: 0,
+  overdueNames: [],
+};
 
 /**
  * Every deadline fact for the given courses (null = all), keyed `courseId:userId`.
@@ -271,11 +294,13 @@ async function loadDeadlineFacts(courseIds: number[] | null): Promise<Map<string
   // they are actually in the course. A cohort — when the task names one — narrows that
   // further; a task with no cohort applies to everyone enrolled.
   const { rows } = await sql<DeadlineRow>(
-    `select d.moodle_course_id, e.moodle_user_id, d.cmid,
+    `select d.moodle_course_id, e.moodle_user_id, d.cmid, ca.name,
             d.due_date, d.month, d.weekday, d.nth, d.created_at,
             (ac.cmid is not null) as completed
        from deadlines d
        join enrollments e on e.moodle_course_id = d.moodle_course_id
+       join course_activities ca
+         on ca.moodle_course_id = d.moodle_course_id and ca.cmid = d.cmid
        left join activity_completion ac
          on ac.moodle_course_id = d.moodle_course_id
         and ac.moodle_user_id   = e.moodle_user_id
@@ -293,6 +318,7 @@ async function loadDeadlineFacts(courseIds: number[] | null): Promise<Map<string
       courseId: row.moodle_course_id,
       userId: row.moodle_user_id,
       cmid: row.cmid,
+      name: row.name,
       rule: {
         date:
           row.due_date === null
@@ -309,10 +335,27 @@ async function loadDeadlineFacts(courseIds: number[] | null): Promise<Map<string
   );
 }
 
-/** Where the person should be in this course by today, as a percentage of its activities. */
-function targetPercent(facts: DeadlineFacts, activitiesTotal: number): number | null {
-  if (facts.total === 0 || activitiesTotal === 0) return null;
-  return Math.round((facts.due / activitiesTotal) * 10000) / 100;
+/**
+ * Where the fill would reach if nothing were overdue: everything already done, plus the
+ * work whose date has passed. The gap between the fill and this mark is exactly the
+ * missing work, which is the only thing the mark is there to show.
+ *
+ * The first version divided the *due deadlines* by the course's activity count, so one
+ * task among forty activities put the mark at 2.5% — at the very start of the segment,
+ * behind the fill, for someone who had missed it. Completion and deadline compliance are
+ * different axes; projecting one onto the other produced a number that meant nothing.
+ *
+ * Null when nothing is overdue: the mark would sit exactly on the end of the fill and
+ * say nothing.
+ */
+export function targetPercent(
+  facts: DeadlineFacts,
+  activitiesCompleted: number,
+  activitiesTotal: number,
+): number | null {
+  if (facts.overdue === 0 || activitiesTotal === 0) return null;
+  const reachable = Math.min(activitiesCompleted + facts.overdue, activitiesTotal);
+  return Math.round((reachable / activitiesTotal) * 10000) / 100;
 }
 
 async function findCourse(courseId: number): Promise<Course | null> {
@@ -1153,8 +1196,13 @@ async function completionRings(
         return {
           course,
           percent: cell?.percent_complete ?? null,
-          targetPercent: targetPercent(facts, cell?.activities_total ?? 0),
+          targetPercent: targetPercent(
+            facts,
+            cell?.activities_completed ?? 0,
+            cell?.activities_total ?? 0,
+          ),
           overdue: facts.overdue,
+          overdueActivities: facts.overdueNames,
         };
       });
 
@@ -1166,6 +1214,10 @@ async function completionRings(
       user: toUserWithAvatar(row, avatarBase),
       segments,
       overdue: segments.reduce((sum, segment) => sum + segment.overdue, 0),
+      earlyDone: courses.reduce(
+        (sum, course) => sum + (deadlines.get(`${course.id}:${row.moodle_user_id}`)?.earlyDone ?? 0),
+        0,
+      ),
       // Unweighted mean of the tracked courses, matching every other widget: a
       // 40-activity course does not count more than a 4-activity one.
       percent:

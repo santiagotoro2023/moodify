@@ -13,7 +13,7 @@ import type {
 } from '@moodify/shared';
 import { deadlineDueAt, deadlineNextDueAt, nthWeekdayOf } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
-import { foldDeadlines, foldEvents } from './widgetData.ts';
+import { foldDeadlines, foldEvents, targetPercent } from './widgetData.ts';
 
 /**
  * Pure unit tests for the public-route anonymisation rules. The SQL side of
@@ -394,31 +394,34 @@ test('foldDeadlines counts due and overdue activities per course and user', () =
   const facts = foldDeadlines(
     [
       // Past its date and not done → overdue.
-      { courseId: 5, userId: 7, cmid: 1, rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: false },
+      { courseId: 5, userId: 7, cmid: 1, name: 'Activity 1', rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: false },
       // Past its date but done → due, not overdue.
-      { courseId: 5, userId: 7, cmid: 2, rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: true },
+      { courseId: 5, userId: 7, cmid: 2, name: 'Activity 2', rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: true },
       // Written down in January, first December still ahead → a deadline, but not due.
-      { courseId: 5, userId: 7, cmid: 3, rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
+      { courseId: 5, userId: 7, cmid: 3, name: 'Activity 3', rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
     ],
     day('2026-10-01'),
   );
-  assert.deepEqual(facts.get('5:7'), { total: 3, due: 2, overdue: 1 });
+  assert.deepEqual(facts.get('5:7'), {
+    total: 3,
+    due: 2,
+    overdue: 1,
+    earlyDone: 0,
+    overdueNames: ['Activity 1'],
+  });
 });
 
 test('foldDeadlines lets the strictest cohort win when two claim one activity', () => {
   const rows = [
     // Same activity via a cohort whose deadline is not in force yet...
-    { courseId: 5, userId: 7, cmid: 1, rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
+    { courseId: 5, userId: 7, cmid: 1, name: 'Activity 1', rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
     // ...and via one whose deadline has passed. Two groups must not buy an extension.
-    { courseId: 5, userId: 7, cmid: 1, rule: SEPTEMBER_FIRST_MONDAY, createdAt: day('2025-01-01'), completed: false },
+    { courseId: 5, userId: 7, cmid: 1, name: 'Activity 1', rule: SEPTEMBER_FIRST_MONDAY, createdAt: day('2025-01-01'), completed: false },
   ];
-  assert.deepEqual(foldDeadlines(rows, day('2026-10-01')).get('5:7'), { total: 1, due: 1, overdue: 1 });
+  const expected = { total: 1, due: 1, overdue: 1, earlyDone: 0, overdueNames: ['Activity 1'] };
+  assert.deepEqual(foldDeadlines(rows, day('2026-10-01')).get('5:7'), expected);
   // Order of the rows must not change the verdict.
-  assert.deepEqual(foldDeadlines([...rows].reverse(), day('2026-10-01')).get('5:7'), {
-    total: 1,
-    due: 1,
-    overdue: 1,
-  });
+  assert.deepEqual(foldDeadlines([...rows].reverse(), day('2026-10-01')).get('5:7'), expected);
 });
 
 test('completion_rings anonymises names and strips the profile picture', () => {
@@ -428,8 +431,11 @@ test('completion_rings anonymises names and strips the profile picture', () => {
     entries: [
       {
         user: { ...user(7, 'Zoe'), avatarUrl: '/api/user-image/7' },
-        segments: [{ course, percent: 50, targetPercent: 25, overdue: 1 }],
+        segments: [
+          { course, percent: 50, targetPercent: 75, overdue: 1, overdueActivities: ['ISO/OSI'] },
+        ],
         overdue: 1,
+        earlyDone: 0,
         percent: 50,
         badges: [],
       },
@@ -449,4 +455,16 @@ test('every enrollments query is aliased e, as studentFilter requires', () => {
   // rather than the live-Postgres test suite this repo deliberately does not have.
   const source = readFileSync(new URL('./widgetData.ts', import.meta.url), 'utf8');
   assert.deepEqual(source.match(/\b(from|join)\s+enrollments(?!\s+e\b)/g), null);
+});
+
+test('the target mark sits ahead of the fill by exactly the overdue work', () => {
+  const facts = { total: 4, due: 4, overdue: 3, earlyDone: 0, overdueNames: [] };
+  // 12 of 40 done is a 30% fill; three overdue means the mark belongs at 37.5%, in
+  // front of it. The first version divided due deadlines by activity count and put the
+  // mark at 10% — behind the fill, for someone who had missed three deadlines.
+  assert.equal(targetPercent(facts, 12, 40), 37.5);
+  // Nothing overdue: the mark would land exactly on the end of the fill and say nothing.
+  assert.equal(targetPercent({ ...facts, overdue: 0 }, 12, 40), null);
+  // It can never point past a full ring.
+  assert.equal(targetPercent(facts, 39, 40), 100);
 });

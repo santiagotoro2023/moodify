@@ -30,6 +30,7 @@ import type { SyncProgress } from '@moodify/shared';
 import { ASSETS_DIR, DEFAULT_POLL_INTERVAL_SECONDS, FULL_DISCOVERY_INTERVAL_MS } from './config.ts';
 import { decryptSecret } from './crypto.ts';
 import { sql } from './db.ts';
+import { runNotifications } from './notify.ts';
 import {
   computeCompletion,
   downloadImage,
@@ -834,6 +835,14 @@ async function executeRun(logger: FastifyBaseLogger, mode: SyncMode): Promise<vo
       await recordHistorySample(logger);
     } catch (err) {
       logger.warn({ err: describeError(err) }, 'history sample failed');
+    }
+
+    // Same rule for reminders: a mail server that is down is not a Moodle problem, and
+    // must not put the connection banner up or abandon the rest of the run.
+    try {
+      await runNotifications(logger);
+    } catch (err) {
+      logger.warn({ err: describeError(err) }, 'task reminders failed');
     }
 
     const durationMs = Date.now() - started;
