@@ -1,11 +1,15 @@
 import { ZodError } from 'zod';
 import {
+  deadlineDueAt,
   parseWidgetConfig,
   type Badge,
   type ChartWindow,
   type CompletionEntry,
+  type CompletionRingsEntry,
   type Course,
+  type DeadlineRule,
   type MoodleUser,
+  type RingSegment,
   type WidgetConfig,
   type WidgetData,
   type WidgetDataError,
@@ -173,7 +177,126 @@ function toBadge(row: BadgeRow): Badge {
 }
 
 function emptyEntry(courseId: number): CompletionEntry {
-  return { courseId, activitiesTotal: 0, activitiesCompleted: 0, percent: null };
+  return { courseId, activitiesTotal: 0, activitiesCompleted: 0, percent: null, overdue: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Deadlines
+//
+// A deadline is a yearly recurrence rule attached to (activity, cohort). Whether it has
+// passed is decided in TypeScript rather than SQL: "the first Monday in September" is
+// two lines of Date arithmetic and an unreadable pile of generate_series, and the same
+// function then serves the Settings page, so there is exactly one definition of when a
+// deadline falls.
+// ---------------------------------------------------------------------------
+
+type DeadlineRow = {
+  moodle_course_id: number;
+  moodle_user_id: number;
+  cmid: number;
+  month: number;
+  weekday: number;
+  nth: number;
+  created_at: Date;
+  completed: boolean;
+};
+
+export interface DeadlineFacts {
+  /** Deadlines applying to this (course, user) at all. 0 → no target can be computed. */
+  total: number;
+  /** Of those, the ones already past their date. */
+  due: number;
+  /** Of the due ones, the ones still not completed. */
+  overdue: number;
+}
+
+/**
+ * Folds raw (deadline × cohort member) rows into one set of counters per (course, user).
+ *
+ * A person can reach the same activity through several cohorts. The earliest deadline in
+ * force wins: being in two groups cannot buy you an extension.
+ */
+export function foldDeadlines(
+  rows: readonly {
+    courseId: number;
+    userId: number;
+    cmid: number;
+    rule: DeadlineRule;
+    createdAt: Date;
+    completed: boolean;
+  }[],
+  now: Date,
+): Map<string, DeadlineFacts> {
+  const perActivity = new Map<string, { pair: string; due: Date | null; completed: boolean }>();
+  for (const row of rows) {
+    const key = `${row.courseId}:${row.userId}:${row.cmid}`;
+    const due = deadlineDueAt(row.rule, row.createdAt, now);
+    const seen = perActivity.get(key);
+    if (seen === undefined) {
+      perActivity.set(key, {
+        pair: `${row.courseId}:${row.userId}`,
+        due,
+        completed: row.completed,
+      });
+    } else if (due !== null && (seen.due === null || due < seen.due)) {
+      seen.due = due;
+    }
+  }
+
+  const out = new Map<string, DeadlineFacts>();
+  for (const item of perActivity.values()) {
+    const facts = out.get(item.pair) ?? { total: 0, due: 0, overdue: 0 };
+    facts.total += 1;
+    if (item.due !== null) {
+      facts.due += 1;
+      if (!item.completed) facts.overdue += 1;
+    }
+    out.set(item.pair, facts);
+  }
+  return out;
+}
+
+const NO_DEADLINES: DeadlineFacts = { total: 0, due: 0, overdue: 0 };
+
+/**
+ * Every deadline fact for the given courses (null = all), keyed `courseId:userId`.
+ *
+ * ponytail: reads the whole join and folds in memory. At the documented scale (<50
+ * users, <20 courses, a handful of deadlines) that is a few hundred rows; push the
+ * aggregation into SQL if a deployment ever outgrows that.
+ */
+async function loadDeadlineFacts(courseIds: number[] | null): Promise<Map<string, DeadlineFacts>> {
+  const { rows } = await sql<DeadlineRow>(
+    `select d.moodle_course_id, cm.moodle_user_id, d.cmid,
+            d.month, d.weekday, d.nth, d.created_at,
+            (ac.cmid is not null) as completed
+       from deadlines d
+       join cohort_members cm on cm.moodle_cohort_id = d.moodle_cohort_id
+       left join activity_completion ac
+         on ac.moodle_course_id = d.moodle_course_id
+        and ac.moodle_user_id   = cm.moodle_user_id
+        and ac.cmid             = d.cmid
+      where $1::int[] is null or d.moodle_course_id = any($1::int[])`,
+    [courseIds],
+  );
+
+  return foldDeadlines(
+    rows.map((row) => ({
+      courseId: row.moodle_course_id,
+      userId: row.moodle_user_id,
+      cmid: row.cmid,
+      rule: { month: row.month, weekday: row.weekday, nth: row.nth },
+      createdAt: row.created_at,
+      completed: row.completed,
+    })),
+    new Date(),
+  );
+}
+
+/** Where the person should be in this course by today, as a percentage of its activities. */
+function targetPercent(facts: DeadlineFacts, activitiesTotal: number): number | null {
+  if (facts.total === 0 || activitiesTotal === 0) return null;
+  return Math.round((facts.due / activitiesTotal) * 10000) / 100;
 }
 
 async function findCourse(courseId: number): Promise<Course | null> {
@@ -289,13 +412,17 @@ async function completionTable(
     [courseIds, users.map((user) => user.id)],
   );
 
+  const deadlines = await loadDeadlineFacts(courseIds);
+
   const byPair = new Map<string, CompletionEntry>();
   for (const row of cellRows) {
-    byPair.set(`${row.moodle_course_id}:${row.moodle_user_id}`, {
+    const key = `${row.moodle_course_id}:${row.moodle_user_id}`;
+    byPair.set(key, {
       courseId: row.moodle_course_id,
       activitiesTotal: row.activities_total,
       activitiesCompleted: row.activities_completed,
       percent: row.percent_complete,
+      overdue: (deadlines.get(key) ?? NO_DEADLINES).overdue,
     });
   }
 
@@ -316,7 +443,7 @@ async function completionTable(
 // badge_cards
 // ---------------------------------------------------------------------------
 
-type BadgeCard = { user: MoodleUser; badges: Badge[]; percent: number | null };
+type BadgeCard = { user: MoodleUser; badges: Badge[]; percent: number | null; overdue: number };
 
 /**
  * Orders the badge widgets. Name is always the tie-break so equal counts keep a
@@ -365,9 +492,15 @@ async function badgeCards(
         where moodle_user_id = $1 and percent_complete is not null`,
       [user.id],
     );
+    // Scope 'user' spans every course, so the bar goes red if anything anywhere is overdue.
+    const deadlines = await loadDeadlineFacts(null);
+    let overdue = 0;
+    for (const [key, facts] of deadlines) {
+      if (key.endsWith(`:${user.id}`)) overdue += facts.overdue;
+    }
     return {
       type,
-      users: [{ user, badges: rows.map(toBadge), percent: pct[0]?.percent ?? null }],
+      users: [{ user, badges: rows.map(toBadge), percent: pct[0]?.percent ?? null, overdue }],
     };
   }
 
@@ -415,11 +548,14 @@ async function badgeCards(
     if (list !== undefined) list.push(toBadge(row));
   }
 
+  const deadlines = await loadDeadlineFacts([course.id]);
+
   // Users with no badges are kept: the card renders an empty state.
   const cards = users.map((user) => ({
     user,
     badges: byUser.get(user.id) ?? [],
     percent: percentByUser.get(user.id) ?? null,
+    overdue: (deadlines.get(`${course.id}:${user.id}`) ?? NO_DEADLINES).overdue,
   }));
   sortCards(cards, config.sortBy, config.sortDir);
 
@@ -561,6 +697,7 @@ async function userList(config: WidgetConfig['user_list']): Promise<WidgetData |
     [user.id, scopedCourseId],
   );
 
+  const deadlines = await loadDeadlineFacts(null);
   const completion = courseRows.map((row) => ({
     course: toCourse(row),
     entry: {
@@ -568,6 +705,7 @@ async function userList(config: WidgetConfig['user_list']): Promise<WidgetData |
       activitiesTotal: row.activities_total ?? 0,
       activitiesCompleted: row.activities_completed ?? 0,
       percent: row.percent_complete,
+      overdue: (deadlines.get(`${row.moodle_course_id}:${user.id}`) ?? NO_DEADLINES).overdue,
     },
   }));
 
@@ -894,6 +1032,110 @@ async function progressChart(
 }
 
 // ---------------------------------------------------------------------------
+// completion_rings — one ring per person, one segment per course.
+// ---------------------------------------------------------------------------
+
+type RingUserRow = UserRow & { cohorts: string[] };
+
+async function completionRings(
+  config: WidgetConfig['completion_rings'],
+): Promise<WidgetData | WidgetDataError> {
+  if (config.courseIds.length === 0) {
+    return fail('No courses selected for this widget.');
+  }
+
+  const { rows: courseRows } = await sql<CourseRow>(
+    `select moodle_course_id, shortname, fullname, visible
+       from courses
+      where moodle_course_id = any($1::int[])`,
+    [config.courseIds],
+  );
+  // Configured order is the segment order and the legend order, so the colours stay put
+  // when a course is added; SQL order would reshuffle the whole ring.
+  const byId = new Map(courseRows.map((row) => [row.moodle_course_id, toCourse(row)]));
+  const courses = config.courseIds
+    .map((id) => byId.get(id))
+    .filter((course): course is Course => course !== undefined);
+  if (courses.length === 0) return fail(COURSE_GONE);
+  const courseIds = courses.map((course) => course.id);
+
+  const { rows: userRows } = await sql<RingUserRow>(
+    `select distinct u.moodle_user_id, u.fullname, u.email,
+            coalesce((select array_agg(co.name order by co.name)
+                        from cohort_members m
+                        join cohorts co on co.moodle_cohort_id = m.moodle_cohort_id
+                       where m.moodle_user_id = u.moodle_user_id), '{}') as cohorts
+       from enrollments e
+       join moodle_users u on u.moodle_user_id = e.moodle_user_id
+      where e.moodle_course_id = any($1::int[])
+        and ${studentFilter('$2')}
+        and ${excludeFilter('$3')}
+        and (cardinality($4::int[]) = 0
+             or exists (select 1 from cohort_members m
+                         where m.moodle_user_id = u.moodle_user_id
+                           and m.moodle_cohort_id = any($4::int[])))
+      order by u.fullname asc, u.moodle_user_id asc`,
+    [courseIds, config.includeStaff, config.excludeUserIds, config.cohortIds],
+  );
+  if (userRows.length === 0) return { type: 'completion_rings', courses, entries: [] };
+
+  const { rows: cellRows } = await sql<CellRow>(
+    `select moodle_course_id, moodle_user_id, activities_total, activities_completed, percent_complete
+       from completion_snapshot
+      where moodle_course_id = any($1::int[])
+        and moodle_user_id = any($2::int[])`,
+    [courseIds, userRows.map((row) => row.moodle_user_id)],
+  );
+  const cells = new Map(cellRows.map((row) => [`${row.moodle_course_id}:${row.moodle_user_id}`, row]));
+  const deadlines = await loadDeadlineFacts(courseIds);
+
+  const entries: CompletionRingsEntry[] = userRows.map((row) => {
+    const segments: RingSegment[] = courses.map((course) => {
+      const key = `${course.id}:${row.moodle_user_id}`;
+      const cell = cells.get(key);
+      const facts = deadlines.get(key) ?? NO_DEADLINES;
+      return {
+        course,
+        percent: cell?.percent_complete ?? null,
+        targetPercent: targetPercent(facts, cell?.activities_total ?? 0),
+        overdue: facts.overdue,
+      };
+    });
+
+    const tracked = segments
+      .map((segment) => segment.percent)
+      .filter((percent): percent is number => percent !== null);
+
+    return {
+      user: toUser(row),
+      cohorts: row.cohorts,
+      segments,
+      overdue: segments.reduce((sum, segment) => sum + segment.overdue, 0),
+      // Unweighted mean of the tracked courses, matching every other widget: a
+      // 40-activity course does not count more than a 4-activity one.
+      percent:
+        tracked.length === 0
+          ? null
+          : Math.round((tracked.reduce((sum, value) => sum + value, 0) / tracked.length) * 100) / 100,
+    };
+  });
+
+  const dir = config.sortDir === 'desc' ? -1 : 1;
+  entries.sort((a, b) => {
+    const byName = a.user.fullname.localeCompare(b.user.fullname) || a.user.id - b.user.id;
+    if (config.sortBy === 'name') return dir * byName;
+    if (config.sortBy === 'overdue') return dir * (a.overdue - b.overdue) || byName;
+    // Untracked people sort last in either direction, as they do everywhere else.
+    if (a.percent === null && b.percent === null) return byName;
+    if (a.percent === null) return 1;
+    if (b.percent === null) return -1;
+    return dir * (a.percent - b.percent) || byName;
+  });
+
+  return { type: 'completion_rings', courses, entries };
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -936,6 +1178,8 @@ export async function resolveWidgetData(
         return await userList(parseWidgetConfig('user_list', widget.config));
       case 'progress_chart':
         return await progressChart(parseWidgetConfig('progress_chart', widget.config), avatarBase);
+      case 'completion_rings':
+        return await completionRings(parseWidgetConfig('completion_rings', widget.config));
       default:
         return fail(`Unknown widget type "${String(widget.type)}".`);
     }

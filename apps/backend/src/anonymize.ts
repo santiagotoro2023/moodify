@@ -131,6 +131,15 @@ export function anonymizeWidgetData(data: WidgetData, shared?: Map<number, strin
         series: data.series.map((entry) => ({ ...entry, user: relabel(entry.user, labels) })),
       };
     }
+    case 'completion_rings': {
+      const labels = buildLabelsFor(data.entries.map((entry) => entry.user));
+      // Cohort names survive: "1. Lehrjahr" describes a class, not a person, and it is
+      // what makes a public board readable. Nothing else on the tile is identifying.
+      return {
+        ...data,
+        entries: data.entries.map((entry) => ({ ...entry, user: relabel(entry.user, labels) })),
+      };
+    }
     case 'course_overview':
       // Aggregate only — carries no names or emails.
       return data;

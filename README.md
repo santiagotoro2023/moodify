@@ -60,6 +60,16 @@ Moodify cannot configure Moodle remotely. A Moodle administrator has to do this 
    | `core_completion_get_activities_completion_status` | per-user activity completion |
    | `core_badges_get_user_badges` | badges awarded to a user |
 
+   Optional, and only needed for deadline tracking (Settings → Deadlines) and the
+   *Progress rings* widget. Without them everything else works unchanged; there are simply
+   no cohorts and no activity names to hang a deadline on.
+
+   | Function | Used for |
+   |---|---|
+   | `core_cohort_get_cohorts` | the cohorts a deadline applies to, e.g. "1. Lehrjahr" |
+   | `core_cohort_get_cohort_members` | who is in them |
+   | `core_course_get_contents` | activity **names** — the completion endpoint only returns cmids |
+
 4. Create a token for a Moodle account that can see the courses you care about, **or** authorise
    that account on the service and let Moodify fetch a token for you via `login/token.php` in the
    setup wizard.
@@ -173,6 +183,36 @@ as it now stands is the more useful reading for a leaderboard anyway. Timestamps
 the full discovery pass only, not every poll — they are historical facts that do not change, so
 re-reading them every 60 seconds would rewrite thousands of rows to learn nothing.
 
+**Deadlines are rules, not dates.** "The first Monday in September, every year" is stored as
+(month, weekday, nth) and the occurrence is computed on read, so it rolls into the next year by
+itself and is measured against whoever is in the cohort at that point — a student who moves from
+first year to second gets the second year's deadlines automatically. Deadlines attach to a single
+activity and a single cohort; Moodle's own "expected completion" dates are not imported, because
+Moodle has no notion of a different date per year group and that is the whole point here.
+
+`created_at` on a deadline is load-bearing rather than bookkeeping. A yearly rule has,
+mathematically, always already occurred, so without an anchor a rule entered in June would report
+the entire cohort overdue since last September the instant it was saved. A rule takes effect at its
+first occurrence *after* it was written down. One person reachable through two cohorts is measured
+against the earliest deadline in force: being in two groups cannot buy an extension.
+
+An activity counts as overdue when its deadline has passed and `activity_completion` holds no row
+for it. That table is refreshed on the full discovery pass, not every poll, so "overdue" can lag a
+completion by up to fifteen minutes — day-granularity deadlines do not need better than that.
+
+**Completion bars are one colour.** Light blue for progress, red only when something is overdue.
+Not red/amber/green: a student at 20% in October is not failing, they are early, and colouring them
+red beside someone at 70% states a verdict Moodify has no basis for. A missed deadline *is* a
+verdict, so that is what gets red — in the completion table, the badge cards, and the ring segments
+alike.
+
+**Progress rings.** One ring per person, cut into an equal segment per selected course, each filled
+to that course's completion in that course's colour — finish everything and the ring is a full
+circle of colour. Segment order comes from the widget config rather than the database, so adding a
+course does not reshuffle everyone's colours. The tick inside a segment is the target: the share of
+that course's activities whose deadline for the person's cohort has already passed. No deadlines in
+a course means no tick, not a tick at zero.
+
 **Profile pictures.** Synced from `core_enrol_get_enrolled_users` and cached locally, for the same
 reason badge icons are: `pluginfile.php` needs the web service token, so Moodle can never be
 hotlinked. Moodle sends a URL even for users who never uploaded one — it points at the theme's
@@ -181,7 +221,8 @@ initials instead of a row of identical strangers. Unlike badge icons, a face is 
 avatars are served only to a logged-in admin (`/api/user-image/:id`) or through a share token whose
 dashboard is **not** anonymised (`/api/public/:token/user-image/:id`).
 
-**Anonymization.** With *Anonymize names* on, the public route replaces names with `Student 1`,
+**Anonymization.** Cohort names survive it — "1. Lehrjahr" describes a class, not a person, and
+without it a public ring board is unreadable. With *Anonymize names* on, the public route replaces names with `Student 1`,
 `Student 2`, … numbered by ascending Moodle user id so the labels stay stable across reloads, and
 strips email entirely, along with the profile picture — a face identifies someone at least as well
 as a name, so "Student 3" beside their photo anonymises nothing. Initials were rejected for the

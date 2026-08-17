@@ -16,6 +16,7 @@ export const WIDGET_TYPES = [
   'leaderboard',
   'user_list',
   'progress_chart',
+  'completion_rings',
 ] as const;
 export type WidgetType = (typeof WIDGET_TYPES)[number];
 
@@ -152,6 +153,33 @@ export const progressChartConfig = z.object({
   // "make it readable from across the room".
 });
 
+/** Diameter of one person's ring. */
+export const RING_SIZES = ['small', 'medium', 'large'] as const;
+export type RingSize = (typeof RING_SIZES)[number];
+
+/**
+ * One ring per person, split into one segment per selected course. Each segment is
+ * filled to that course's completion in that course's own colour, so a person who has
+ * finished everything shows a full, fully coloured ring.
+ *
+ * Unlike every other widget this one is deadline-aware: a segment holding an overdue
+ * activity turns red, and a tick marks where the person's cohort should be by today.
+ */
+export const completionRingsConfig = z.object({
+  /** Segments, in this order. Each gets an equal slice of the circle. */
+  courseIds: z.array(courseId).max(12).default([]),
+  /** Whose rings are drawn. Empty = every student enrolled in the selected courses. */
+  cohortIds: z.array(z.number().int().positive()).max(20).default([]),
+  sortBy: z.enum(['name', 'percent', 'overdue']).default('name'),
+  sortDir,
+  ringSize: z.enum(RING_SIZES).default('medium'),
+  /** Draw the "where you should be by now" tick inside each segment. */
+  showTarget: z.boolean().default(true),
+  showLegend: z.boolean().default(true),
+  includeStaff: z.boolean().default(false),
+  excludeUserIds,
+});
+
 export const WIDGET_CONFIG_SCHEMAS = {
   completion_table: completionTableConfig,
   badge_cards: badgeCardsConfig,
@@ -160,6 +188,7 @@ export const WIDGET_CONFIG_SCHEMAS = {
   leaderboard: leaderboardConfig,
   user_list: userListConfig,
   progress_chart: progressChartConfig,
+  completion_rings: completionRingsConfig,
 } satisfies Record<WidgetType, z.ZodTypeAny>;
 
 export type WidgetConfig = {
@@ -170,6 +199,7 @@ export type WidgetConfig = {
   leaderboard: z.infer<typeof leaderboardConfig>;
   user_list: z.infer<typeof userListConfig>;
   progress_chart: z.infer<typeof progressChartConfig>;
+  completion_rings: z.infer<typeof completionRingsConfig>;
 };
 
 /** Parses an untrusted config blob against the schema for `type`. Throws ZodError. */
@@ -192,6 +222,9 @@ export const WIDGET_DEFAULTS: {
   user_list: { config: { scope: 'all' }, w: 4, h: 5, title: 'User' },
   // Wider than tall: a line chart needs horizontal room before it needs vertical.
   progress_chart: { config: { scope: 'all', metric: 'badges' }, w: 6, h: 5, title: 'Over time' },
+  // Built to be the whole screen: a wall of rings only reads as "who is where" when
+  // everyone is on it at once.
+  completion_rings: { config: {}, w: 12, h: 8, title: 'Progress rings' },
 };
 
 // ---------------------------------------------------------------------------
@@ -214,6 +247,22 @@ export interface MoodleUser {
    * cached. Always null on an anonymized public view — a face is a name.
    */
   avatarUrl?: string | null;
+}
+
+/** A Moodle site-wide cohort, e.g. "1. Lehrjahr". Deadlines are set per cohort. */
+export interface Cohort {
+  id: number;
+  name: string;
+  idnumber: string | null;
+  memberCount: number;
+}
+
+/** One completion-trackable activity in a course, for the deadline picker. */
+export interface CourseActivity {
+  courseId: number;
+  cmid: number;
+  name: string;
+  modname: string;
 }
 
 export interface Badge {
@@ -311,6 +360,12 @@ export interface CompletionEntry {
   activitiesCompleted: number;
   /** null = course has no completion-tracked activities. Render as "not tracked". */
   percent: number | null;
+  /**
+   * Activities in this course whose deadline for one of the user's cohorts has passed
+   * and which are still not completed. 0 when nothing is overdue, which is also what a
+   * course with no deadlines configured always reports.
+   */
+  overdue: number;
 }
 
 export interface CompletionTableData {
@@ -325,9 +380,10 @@ export interface BadgeCardsData {
    * Ordered by badge count descending, so index 0/1/2 are the gold/silver/bronze
    * places the UI decorates. `percent` is completion for the scoped course, or the
    * mean across the user's enrolled courses when the widget covers all courses;
-   * null keeps its "not tracked" meaning.
+   * null keeps its "not tracked" meaning. `overdue` counts activities past a deadline
+   * for one of the user's cohorts, which turns the completion bar red.
    */
-  users: { user: MoodleUser; badges: Badge[]; percent: number | null }[];
+  users: { user: MoodleUser; badges: Badge[]; percent: number | null; overdue: number }[];
 }
 
 /** Same rows as badge_cards, rendered without the completion bar. */
@@ -381,6 +437,38 @@ export interface ProgressChartData {
   series: ProgressSeries[];
 }
 
+/** One course's slice of a person's ring. */
+export interface RingSegment {
+  course: Course;
+  /** null = the course tracks no activities; the segment is drawn as an empty track. */
+  percent: number | null;
+  /**
+   * How much of this course the person should have finished by today, from the
+   * deadlines set for their cohorts. null when the course has no deadline in force.
+   */
+  targetPercent: number | null;
+  overdue: number;
+}
+
+export interface CompletionRingsEntry {
+  user: MoodleUser;
+  /** Cohort names the person belongs to, shown under the name when several are on screen. */
+  cohorts: string[];
+  /** One per selected course, in the widget's configured order. */
+  segments: RingSegment[];
+  /** Total overdue across the segments, for sorting and the badge on the tile. */
+  overdue: number;
+  /** Mean of the tracked segments — the number in the middle of the ring. */
+  percent: number | null;
+}
+
+export interface CompletionRingsData {
+  type: 'completion_rings';
+  /** The segment order, and the legend. Colour is assigned by index. */
+  courses: Course[];
+  entries: CompletionRingsEntry[];
+}
+
 export type WidgetData =
   | CompletionTableData
   | BadgeCardsData
@@ -388,7 +476,8 @@ export type WidgetData =
   | CourseOverviewData
   | LeaderboardData
   | UserListData
-  | ProgressChartData;
+  | ProgressChartData
+  | CompletionRingsData;
 
 /** Widget data resolution failed (e.g. its course was deleted in Moodle). */
 export interface WidgetDataError {
@@ -404,3 +493,122 @@ export const REQUIRED_WS_FUNCTIONS = [
   'core_completion_get_activities_completion_status',
   'core_badges_get_user_badges',
 ] as const;
+
+/**
+ * Extra functions the deadline tracking needs. Deliberately NOT in the required list:
+ * an existing install whose External Service predates this feature must keep working,
+ * and the connection test must not start failing because of a feature nobody uses.
+ * Without them there are simply no cohorts and no activity names to attach a deadline
+ * to, and Settings says so.
+ */
+export const DEADLINE_WS_FUNCTIONS = [
+  'core_cohort_get_cohorts',
+  'core_cohort_get_cohort_members',
+  'core_course_get_contents',
+] as const;
+
+// ---------------------------------------------------------------------------
+// Deadlines
+//
+// A deadline is a yearly recurrence rule, not a date: "the first Monday in September,
+// every year". The occurrence is computed on read so it rolls into the next year on
+// its own, against whoever is in the cohort at that point.
+// ---------------------------------------------------------------------------
+
+/** Sunday = 0, matching Date#getDay. */
+export const WEEKDAY_NAMES = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+] as const;
+
+export const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+export interface DeadlineRule {
+  /** 1-12. */
+  month: number;
+  /** 0-6, Sunday = 0. */
+  weekday: number;
+  /** 1-5, or -1 for "the last one in the month". */
+  nth: number;
+}
+
+export interface Deadline extends DeadlineRule {
+  id: number;
+  courseId: number;
+  courseName: string;
+  cmid: number;
+  /** From course_activities; falls back to "Activity <cmid>" if the sync has not seen it. */
+  activityName: string;
+  cohortId: number;
+  cohortName: string;
+  /** The occurrence currently in force (ISO), or null while the rule is still upcoming. */
+  dueAt: string | null;
+  /** The next occurrence (ISO), always set. */
+  nextDueAt: string;
+}
+
+/**
+ * The nth `weekday` of `month` in `year`, at the end of that day — "by the first Monday
+ * in September" includes all of that Monday.
+ *
+ * An nth that does not exist (a fifth Monday in a month with four) clamps to the last
+ * one, which is the only reading that does not silently skip a year.
+ */
+export function nthWeekdayOf(year: number, rule: DeadlineRule): Date {
+  const first = new Date(year, rule.month - 1, 1);
+  const offset = (rule.weekday - first.getDay() + 7) % 7;
+  const lastOfMonth = new Date(year, rule.month, 0).getDate();
+
+  let day: number;
+  if (rule.nth < 0) {
+    day = 1 + offset + Math.floor((lastOfMonth - 1 - offset) / 7) * 7;
+  } else {
+    day = 1 + offset + (rule.nth - 1) * 7;
+    while (day > lastOfMonth) day -= 7;
+  }
+  return new Date(year, rule.month - 1, day, 23, 59, 59, 999);
+}
+
+/**
+ * The occurrence a rule is currently being measured against, or null when it has none
+ * yet. Everything before this instant is due; everything after it is not.
+ *
+ * `createdAt` anchors the rule. A yearly rule has, mathematically, always already
+ * occurred, so without an anchor a deadline entered in June would report the whole
+ * cohort overdue since last September the moment it was saved. The rule takes effect at
+ * its first occurrence after it was written down.
+ */
+export function deadlineDueAt(rule: DeadlineRule, createdAt: Date, now: Date): Date | null {
+  const thisYear = nthWeekdayOf(now.getFullYear(), rule);
+  const inForce = thisYear <= now ? thisYear : nthWeekdayOf(now.getFullYear() - 1, rule);
+  return inForce > createdAt ? inForce : null;
+}
+
+/** The next occurrence, whether or not the rule is in force yet. */
+export function deadlineNextDueAt(rule: DeadlineRule, now: Date): Date {
+  const thisYear = nthWeekdayOf(now.getFullYear(), rule);
+  return thisYear > now ? thisYear : nthWeekdayOf(now.getFullYear() + 1, rule);
+}
+
+export function describeDeadlineRule(rule: DeadlineRule): string {
+  const which = rule.nth < 0 ? 'last' : ['first', 'second', 'third', 'fourth', 'fifth'][rule.nth - 1];
+  return `${which ?? rule.nth} ${WEEKDAY_NAMES[rule.weekday] ?? '?'} in ${MONTH_NAMES[rule.month - 1] ?? '?'}, yearly`;
+}

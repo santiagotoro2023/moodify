@@ -34,6 +34,9 @@ import {
   computeCompletion,
   downloadImage,
   getActivitiesCompletion,
+  getCohortMembers,
+  getCohorts,
+  getCourseContents,
   getCourses,
   getEnrolledUsers,
   getUserBadges,
@@ -552,6 +555,90 @@ async function processTasks(ctx: RunContext, tasks: readonly SyncTask[]): Promis
 }
 
 // ---------------------------------------------------------------------------
+// Deadline tracking inputs: cohorts, cohort membership and activity names.
+//
+// All three ride on optional web service functions. An External Service that predates
+// the feature simply does not expose them, and that is not a sync failure — it means no
+// deadlines can be configured, which Settings explains. So these are logged and skipped,
+// never counted through recordFailure, which would raise the connection error banner
+// over a feature the admin may not use.
+// ---------------------------------------------------------------------------
+
+function skipOptional(ctx: RunContext, err: unknown, detail: Record<string, unknown>): void {
+  ctx.logger.info({ ...detail, err: describeError(err) }, 'deadline data unavailable, skipping');
+}
+
+async function syncCohorts(ctx: RunContext): Promise<void> {
+  progress.phase = 'Discovering cohorts';
+  let cohorts;
+  try {
+    cohorts = await getCohorts(ctx.conn);
+  } catch (err) {
+    skipOptional(ctx, err, { step: 'cohorts' });
+    return;
+  }
+
+  for (const cohort of cohorts) {
+    await sql(
+      `insert into cohorts (moodle_cohort_id, name, idnumber, last_seen_at)
+       values ($1, $2, $3, now())
+       on conflict (moodle_cohort_id) do update
+          set name = excluded.name, idnumber = excluded.idnumber, last_seen_at = now()`,
+      [cohort.id, cohort.name, cohort.idnumber],
+    );
+  }
+
+  let members;
+  try {
+    members = await getCohortMembers(ctx.conn, cohorts.map((c) => c.id));
+  } catch (err) {
+    skipOptional(ctx, err, { step: 'cohort members' });
+    return;
+  }
+
+  for (const [cohortId, userIds] of members) {
+    // Membership is the one thing here that must mirror Moodle exactly: someone moved
+    // out of "1. Lehrjahr" must stop being measured against its deadlines immediately.
+    // Deleting a membership row costs nothing — unlike a user or course, it cascades to
+    // nothing — so a full replace is safe where hard deletion elsewhere is not.
+    await sql(`delete from cohort_members where moodle_cohort_id = $1 and moodle_user_id <> all($2::int[])`, [
+      cohortId,
+      userIds,
+    ]);
+    if (userIds.length === 0) continue;
+    // Only users Moodify already knows: a cohort routinely contains people enrolled in
+    // no tracked course, and the FK would reject them.
+    await sql(
+      `insert into cohort_members (moodle_cohort_id, moodle_user_id)
+       select $1, id from unnest($2::int[]) as id
+        where exists (select 1 from moodle_users u where u.moodle_user_id = id)
+       on conflict do nothing`,
+      [cohortId, userIds],
+    );
+  }
+}
+
+/** Activity names for one course. Never deletes: a deadline FKs to these rows. */
+async function syncCourseActivities(ctx: RunContext, courseId: number): Promise<void> {
+  let modules;
+  try {
+    modules = await getCourseContents(ctx.conn, courseId);
+  } catch (err) {
+    skipOptional(ctx, err, { step: 'course contents', courseId });
+    return;
+  }
+  for (const module of modules) {
+    await sql(
+      `insert into course_activities (moodle_course_id, cmid, name, modname, last_seen_at)
+       values ($1, $2, $3, $4, now())
+       on conflict (moodle_course_id, cmid) do update
+          set name = excluded.name, modname = excluded.modname, last_seen_at = now()`,
+      [courseId, module.cmid, module.name, module.modname],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Discovery (§9.2)
 // ---------------------------------------------------------------------------
 
@@ -561,6 +648,7 @@ async function discoverEntities(ctx: RunContext): Promise<SyncTask[]> {
   for (const course of courses) {
     await upsertCourse(course);
     ctx.courseIds.add(course.id);
+    await syncCourseActivities(ctx, course.id);
   }
   publishCounters(ctx);
 
@@ -589,6 +677,10 @@ async function discoverEntities(ctx: RunContext): Promise<SyncTask[]> {
       recordFailure(ctx, err, { courseId: course.id });
     }
   }
+
+  // After the users exist: cohort_members has a FK onto moodle_users, and a cohort
+  // routinely lists people who are not enrolled in anything Moodify tracks.
+  await syncCohorts(ctx);
 
   const tasks: SyncTask[] = [...pairs];
   for (const userId of ctx.userIds) tasks.push({ kind: 'user', userId });

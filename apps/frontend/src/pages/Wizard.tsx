@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { REQUIRED_WS_FUNCTIONS, type SyncProgress } from '@moodify/shared';
+import { DEADLINE_WS_FUNCTIONS, REQUIRED_WS_FUNCTIONS, type SyncProgress } from '@moodify/shared';
 import { CheckCircle2, Info } from 'lucide-react';
 import { ApiError, api, cn, errorMessage } from '@/lib/api';
 import { Button, Card, ErrorNote, Input, Label, Spinner } from '@/ui';
@@ -260,6 +260,17 @@ export default function Wizard() {
               </p>
               <ul className="space-y-0.5">
                 {REQUIRED_WS_FUNCTIONS.map((fn) => (
+                  <li key={fn}>
+                    <code className="rounded bg-black/40 px-1 py-0.5 text-[11px] text-ink">{fn}</code>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2">
+                Optional, only for deadline tracking — add them now and you will not have to
+                come back to Moodle later:
+              </p>
+              <ul className="space-y-0.5">
+                {DEADLINE_WS_FUNCTIONS.map((fn) => (
                   <li key={fn}>
                     <code className="rounded bg-black/40 px-1 py-0.5 text-[11px] text-ink">{fn}</code>
                   </li>

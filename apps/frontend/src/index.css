@@ -18,6 +18,11 @@
   --color-muted: #8b98a5;
   --color-accent: #6366f1;
   --color-accent-soft: #8b5cf6;
+  /* Completion bars and rings. One colour for progress, not a traffic light: a
+     student at 20% in October is not "bad", they are early, and colouring them red
+     next to someone at 70% reads as a verdict Moodify has no basis for. Red is
+     reserved for the one thing that IS a verdict — a missed deadline. */
+  --color-progress: #38bdf8;
   --color-good: #10b981;
   --color-warn: #f59e0b;
   --color-bad: #f43f5e;

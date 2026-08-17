@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Course, MoodleUser, Widget } from '@moodify/shared';
+import type { Cohort, Course, MoodleUser, Widget } from '@moodify/shared';
 import { api, errorMessage } from '@/lib/api';
 import { Button, ErrorNote, Input, Label, Select, Spinner, Switch } from '@/ui';
 
@@ -23,6 +23,7 @@ export function WidgetConfigForm({
   const [config, setConfig] = useState<Config>((widget.config as Config) ?? {});
   const [courses, setCourses] = useState<Course[]>([]);
   const [users, setUsers] = useState<MoodleUser[]>([]);
+  const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -30,12 +31,14 @@ export function WidgetConfigForm({
   useEffect(() => {
     void (async () => {
       try {
-        const [c, u] = await Promise.all([
+        const [c, u, co] = await Promise.all([
           api.get<Course[]>('/api/courses'),
           api.get<MoodleUser[]>('/api/users'),
+          api.get<Cohort[]>('/api/cohorts'),
         ]);
         setCourses(c);
         setUsers(u);
+        setCohorts(co);
       } catch (err) {
         setError(errorMessage(err));
       } finally {
@@ -202,6 +205,98 @@ export function WidgetConfigForm({
           Clear selection — chart everyone
         </button>
       ) : null}
+    </div>
+  );
+
+  const ringCourseIds = Array.isArray(config.courseIds) ? (config.courseIds as number[]) : [];
+  const ringCohortIds = Array.isArray(config.cohortIds) ? (config.cohortIds as number[]) : [];
+
+  /**
+   * Ordered multi-select: ticking appends, so the list order is the segment order
+   * around the ring and therefore the colour each course gets. Untick and re-tick to
+   * move a course to the end.
+   */
+  const ringCoursePicker = () => (
+    <div>
+      <Label>Courses in the ring</Label>
+      <p className="mb-2 text-xs text-muted">
+        Each course becomes one segment, in the order you tick them — which is also the
+        order of the colours.
+      </p>
+      {courses.length === 0 ? (
+        <p className="text-xs text-muted">No courses synced yet.</p>
+      ) : (
+        <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-edge p-2">
+          {courses.map((course) => {
+            const position = ringCourseIds.indexOf(course.id);
+            return (
+              <label
+                key={course.id}
+                className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-surface"
+              >
+                <input
+                  type="checkbox"
+                  className="accent-accent"
+                  checked={position >= 0}
+                  onChange={() =>
+                    set(
+                      'courseIds',
+                      position >= 0
+                        ? ringCourseIds.filter((x) => x !== course.id)
+                        : [...ringCourseIds, course.id],
+                    )
+                  }
+                />
+                <span className="truncate">{course.fullname}</span>
+                {position >= 0 ? (
+                  <span className="ml-auto shrink-0 text-xs text-muted">#{position + 1}</span>
+                ) : null}
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  const ringCohortPicker = () => (
+    <div>
+      <Label>Cohorts</Label>
+      <p className="mb-2 text-xs text-muted">
+        Tick nobody to show every student in those courses, or pick one or more cohorts —
+        e.g. just the first-year class.
+      </p>
+      {cohorts.length === 0 ? (
+        <p className="text-xs text-muted">
+          No cohorts synced. They need <code>core_cohort_get_cohorts</code> and{' '}
+          <code>core_cohort_get_cohort_members</code> on the Moodle External Service.
+        </p>
+      ) : (
+        <div className="max-h-40 space-y-1 overflow-y-auto rounded-xl border border-edge p-2">
+          {cohorts.map((cohort) => (
+            <label
+              key={cohort.id}
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-sm hover:bg-surface"
+            >
+              <input
+                type="checkbox"
+                className="accent-accent"
+                checked={ringCohortIds.includes(cohort.id)}
+                onChange={() =>
+                  set(
+                    'cohortIds',
+                    ringCohortIds.includes(cohort.id)
+                      ? ringCohortIds.filter((x) => x !== cohort.id)
+                      : [...ringCohortIds, cohort.id],
+                  )
+                }
+              />
+              <span className="truncate">{cohort.name}</span>
+              <span className="ml-auto shrink-0 text-xs text-muted">{cohort.memberCount}</span>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -533,7 +628,64 @@ export function WidgetConfigForm({
         </>
       ) : null}
 
-      {widget.type === 'progress_chart' ? null : densityPicker()}
+      {widget.type === 'completion_rings' ? (
+        <>
+          {ringCoursePicker()}
+          {ringCohortPicker()}
+          {sortPicker(
+            [
+              { value: 'name', label: 'Name' },
+              { value: 'percent', label: 'Overall completion' },
+              { value: 'overdue', label: 'Overdue activities' },
+            ],
+            'name',
+            'asc',
+          )}
+          <div>
+            <Label htmlFor={id('ringSize')}>Ring size</Label>
+            <Select
+              id={id('ringSize')}
+              value={String(config.ringSize ?? 'medium')}
+              onChange={(e) => set('ringSize', e.target.value)}
+            >
+              <option value="small">Small — most people on screen</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large — readable across a room</option>
+            </Select>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor={id('showTarget')} className="mb-0">
+              Show the target mark
+              <span className="mt-0.5 block text-xs font-normal text-muted">
+                A tick inside each segment for how far the person's cohort should be by
+                today, from the deadlines in Settings. Nothing is drawn for a course with
+                no deadline.
+              </span>
+            </Label>
+            <Switch
+              id={id('showTarget')}
+              checked={config.showTarget !== false}
+              onCheckedChange={(v) => set('showTarget', v)}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor={id('ringLegend')} className="mb-0">
+              Show legend
+            </Label>
+            <Switch
+              id={id('ringLegend')}
+              checked={config.showLegend !== false}
+              onCheckedChange={(v) => set('showLegend', v)}
+            />
+          </div>
+          {staffToggle()}
+          {excludePicker()}
+        </>
+      ) : null}
+
+      {widget.type === 'progress_chart' || widget.type === 'completion_rings'
+        ? null
+        : densityPicker()}
       {widget.type === 'badge_cards' || widget.type === 'badge_list' || widget.type === 'user_list'
         ? badgeSizePicker()
         : null}

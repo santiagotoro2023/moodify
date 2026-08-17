@@ -599,6 +599,102 @@ export async function getEnrolledUsers(
   return users;
 }
 
+export interface MoodleCohort {
+  id: number;
+  name: string;
+  idnumber: string | null;
+}
+
+/**
+ * core_cohort_get_cohorts with no ids = every cohort the token's account can see.
+ *
+ * Site-wide cohorts, not course groups: a "1. Lehrjahr" that spans several courses is a
+ * cohort, and a deadline set against it follows the class rather than being re-entered
+ * per course.
+ */
+export async function getCohorts(conn: MoodleConnection): Promise<MoodleCohort[]> {
+  const raw = await callWs<unknown>(conn, 'core_cohort_get_cohorts');
+  const cohorts: MoodleCohort[] = [];
+  for (const entry of Array.isArray(raw) ? raw : []) {
+    const id = readNumber(entry, 'id');
+    if (id === null) continue;
+    const idnumber = readString(entry, 'idnumber');
+    cohorts.push({
+      id,
+      name: readString(entry, 'name') ?? `Cohort ${id}`,
+      idnumber: idnumber !== null && idnumber.trim() !== '' ? idnumber : null,
+    });
+  }
+  return cohorts;
+}
+
+/** core_cohort_get_cohort_members → [{cohortid, userids:[…]}], as a map. */
+export async function getCohortMembers(
+  conn: MoodleConnection,
+  cohortIds: readonly number[],
+): Promise<Map<number, number[]>> {
+  const members = new Map<number, number[]>();
+  if (cohortIds.length === 0) return members;
+
+  const params: Record<string, number> = {};
+  cohortIds.forEach((id, index) => {
+    params[`cohortids[${index}]`] = id;
+  });
+
+  const raw = await callWs<unknown>(conn, 'core_cohort_get_cohort_members', params);
+  for (const entry of Array.isArray(raw) ? raw : []) {
+    const cohortId = readNumber(entry, 'cohortid');
+    if (cohortId === null) continue;
+    const userIds: number[] = [];
+    for (const value of readArray(entry, 'userids')) {
+      if (typeof value === 'number') userIds.push(value);
+      else if (typeof value === 'string' && value.trim() !== '') userIds.push(Number(value));
+    }
+    members.set(cohortId, userIds.filter((id) => Number.isFinite(id)));
+  }
+  return members;
+}
+
+export interface CourseModule {
+  cmid: number;
+  name: string;
+  modname: string;
+}
+
+/**
+ * core_course_get_contents, reduced to the activities a deadline can be set on.
+ *
+ * This is the only call that knows what an activity is *called* —
+ * core_completion_get_activities_completion_status returns nothing but cmids, so
+ * without this there is no way to pick "Aufgabe ISO/OSI" out of a list.
+ *
+ * Modules with completion tracking switched off are dropped: a deadline on something
+ * Moodle never marks complete could never be met. A module that does not report the
+ * field at all is kept — older Moodle versions omit it, and hiding a real activity is
+ * worse than listing one extra.
+ */
+export async function getCourseContents(
+  conn: MoodleConnection,
+  courseId: number,
+): Promise<CourseModule[]> {
+  const raw = await callWs<unknown>(conn, 'core_course_get_contents', { courseid: courseId });
+  const modules: CourseModule[] = [];
+  for (const section of Array.isArray(raw) ? raw : []) {
+    for (const entry of readArray(section, 'modules')) {
+      const cmid = readNumber(entry, 'id');
+      if (cmid === null) continue;
+      const completion = readNumber(entry, 'completion');
+      if (completion === 0) continue;
+      modules.push({
+        cmid,
+        name: readString(entry, 'name') ?? `Activity ${cmid}`,
+        modname: readString(entry, 'modname') ?? 'unknown',
+      });
+    }
+  }
+  return modules;
+}
+
 export interface ActivityCompletionStatus {
   /** Course module id. */
   cmid: number;

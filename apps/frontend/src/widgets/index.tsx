@@ -4,6 +4,8 @@ import type {
   BadgeListData,
   Badge as BadgeType,
   CompletionEntry,
+  CompletionRingsData,
+  CompletionRingsEntry,
   CompletionTableData,
   CourseOverviewData,
   LeaderboardData,
@@ -13,8 +15,18 @@ import type {
   WidgetData,
   WidgetDataError,
 } from '@moodify/shared';
-import { Award, BookOpen, LineChart, Medal, Table2, TrendingUp, Trophy, User } from 'lucide-react';
-import type { BadgeSize, ChartMarker, Density } from '@moodify/shared';
+import {
+  Award,
+  BookOpen,
+  CircleDashed,
+  LineChart,
+  Medal,
+  Table2,
+  TrendingUp,
+  Trophy,
+  User,
+} from 'lucide-react';
+import type { BadgeSize, ChartMarker, Density, RingSize } from '@moodify/shared';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, EmptyState, ErrorNote, Spinner } from '@/ui';
 
@@ -72,11 +84,16 @@ function chartOptionsOf(config: unknown) {
   };
 }
 
-/** Colour band for a completion bar. Untracked never reaches here. */
-function bandClass(percent: number): string {
-  if (percent < 34) return 'bg-bad';
-  if (percent < 67) return 'bg-warn';
-  return 'bg-good';
+/**
+ * Colour for a completion bar: light blue for progress, red when a deadline has been
+ * missed. Deliberately not a red/amber/green band — see --color-progress in index.css.
+ */
+function barClass(overdue: number): string {
+  return overdue > 0 ? 'bg-bad' : 'bg-progress';
+}
+
+function overdueLabel(overdue: number): string {
+  return `${overdue} overdue ${overdue === 1 ? 'activity' : 'activities'}`;
 }
 
 function ProgressBar({ entry }: { entry: CompletionEntry }) {
@@ -87,14 +104,15 @@ function ProgressBar({ entry }: { entry: CompletionEntry }) {
       </span>
     );
   }
+  const activities = `${entry.activitiesCompleted}/${entry.activitiesTotal} activities`;
   return (
     <span
       className="flex items-center gap-2"
-      title={`${entry.activitiesCompleted}/${entry.activitiesTotal} activities`}
+      title={entry.overdue > 0 ? `${activities} — ${overdueLabel(entry.overdue)}` : activities}
     >
       <span className="h-1.5 w-full min-w-10 overflow-hidden rounded-full bg-white/10">
         <span
-          className={cn('block h-full rounded-full', bandClass(entry.percent))}
+          className={cn('block h-full rounded-full', barClass(entry.overdue))}
           style={{ width: `${entry.percent}%` }}
         />
       </span>
@@ -714,7 +732,7 @@ function BadgeCards({
                 <div className="flex items-center gap-3">
                   <span className={cn('flex-1 overflow-hidden rounded-full bg-white/10', bar)}>
                     <span
-                      className={cn('block h-full rounded-full', bandClass(entry.percent))}
+                      className={cn('block h-full rounded-full', barClass(entry.overdue))}
                       style={{ width: `${entry.percent}%` }}
                     />
                   </span>
@@ -748,10 +766,11 @@ function CourseOverview({ data, density }: { data: CourseOverviewData; density: 
           {untracked ? 'This course has no completion-tracked activities' : 'Class average'}
         </p>
       </div>
+      {/* barClass(0): a class average is nobody's deadline, so no one here can be overdue. */}
       {!untracked ? (
         <div className="h-2 overflow-hidden rounded-full bg-white/10">
           <div
-            className={cn('h-full rounded-full', bandClass(data.averagePercent ?? 0))}
+            className={cn('h-full rounded-full', barClass(0))}
             style={{ width: `${data.averagePercent ?? 0}%` }}
           />
         </div>
@@ -834,6 +853,191 @@ function UserList({
 }
 
 // ---------------------------------------------------------------------------
+// completion_rings
+// ---------------------------------------------------------------------------
+
+/** Outer diameter of one person's ring, in px. */
+const RING_PX: Record<RingSize, number> = { small: 88, medium: 120, large: 164 };
+
+interface RingOptions {
+  ringSize: RingSize;
+  showTarget: boolean;
+  showLegend: boolean;
+}
+
+function ringOptionsOf(config: unknown): RingOptions {
+  const raw = (config ?? {}) as Record<string, unknown>;
+  const size = raw.ringSize;
+  return {
+    ringSize: (size === 'small' || size === 'large' ? size : 'medium') as RingSize,
+    showTarget: raw.showTarget !== false,
+    showLegend: raw.showLegend !== false,
+  };
+}
+
+/**
+ * An arc of `r` around (cx, cy), from `from` to `to` in radians measured clockwise from
+ * twelve o'clock. Never called with a full turn — the inter-segment gap always leaves a
+ * sliver, and a 360° arc would collapse to a zero-length path because its two endpoints
+ * are the same point.
+ */
+function arcPath(cx: number, cy: number, r: number, from: number, to: number): string {
+  const at = (angle: number) =>
+    `${(cx + r * Math.sin(angle)).toFixed(2)} ${(cy - r * Math.cos(angle)).toFixed(2)}`;
+  return `M ${at(from)} A ${r} ${r} 0 ${to - from > Math.PI ? 1 : 0} 1 ${at(to)}`;
+}
+
+/**
+ * One person: a ring cut into one segment per course, each filled to that course's
+ * completion in that course's colour. A segment holding an overdue activity is drawn in
+ * red instead — the only thing on this widget that is a judgement rather than a reading.
+ */
+function PersonRing({
+  entry,
+  colors,
+  options,
+}: {
+  entry: CompletionRingsEntry;
+  colors: string[];
+  options: RingOptions;
+}) {
+  const size = RING_PX[options.ringSize];
+  const stroke = Math.max(8, Math.round(size * 0.11));
+  const radius = (size - stroke) / 2;
+  const center = size / 2;
+  const slice = (Math.PI * 2) / Math.max(1, entry.segments.length);
+  // Enough of a gap to read the segments apart, but never so much that a two-course
+  // ring looks like two unrelated arcs.
+  const gap = Math.min(0.12, slice * 0.14);
+
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-center gap-1.5 rounded-xl border p-3 text-center',
+        entry.overdue > 0 ? 'border-bad/40 bg-bad/5' : 'border-edge/60 bg-white/3',
+      )}
+    >
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img">
+        <title>
+          {entry.user.fullname}
+          {entry.overdue > 0 ? ` — ${overdueLabel(entry.overdue)}` : ''}
+        </title>
+        {entry.segments.map((segment, index) => {
+          const from = index * slice + gap / 2;
+          const to = (index + 1) * slice - gap / 2;
+          const span = to - from;
+          const color = segment.overdue > 0 ? '#f43f5e' : colors[index % colors.length] ?? '#38bdf8';
+          const fraction = (segment.percent ?? 0) / 100;
+          const targetAngle =
+            segment.targetPercent === null ? null : from + span * (segment.targetPercent / 100);
+
+          return (
+            <g key={segment.course.id}>
+              <path
+                d={arcPath(center, center, radius, from, to)}
+                fill="none"
+                stroke="rgba(255,255,255,0.09)"
+                strokeWidth={stroke}
+              />
+              {fraction > 0 ? (
+                <path
+                  d={arcPath(center, center, radius, from, from + span * Math.min(1, fraction))}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={stroke}
+                >
+                  <title>
+                    {`${segment.course.fullname}: ${Math.round(segment.percent ?? 0)}%`}
+                    {segment.targetPercent === null
+                      ? ''
+                      : ` (target ${Math.round(segment.targetPercent)}%)`}
+                    {segment.overdue > 0 ? ` — ${overdueLabel(segment.overdue)}` : ''}
+                  </title>
+                </path>
+              ) : null}
+              {/* Where the cohort's deadlines say this person should be by today. */}
+              {options.showTarget && targetAngle !== null ? (
+                <line
+                  x1={center + (radius - stroke / 2) * Math.sin(targetAngle)}
+                  y1={center - (radius - stroke / 2) * Math.cos(targetAngle)}
+                  x2={center + (radius + stroke / 2) * Math.sin(targetAngle)}
+                  y2={center - (radius + stroke / 2) * Math.cos(targetAngle)}
+                  stroke="#e6edf3"
+                  strokeWidth={2}
+                  opacity={0.85}
+                />
+              ) : null}
+            </g>
+          );
+        })}
+        <text
+          x={center}
+          y={center}
+          textAnchor="middle"
+          dominantBaseline="central"
+          className="fill-ink font-medium tabular-nums"
+          fontSize={Math.round(size * 0.2)}
+        >
+          {entry.percent === null ? '—' : `${Math.round(entry.percent)}%`}
+        </text>
+      </svg>
+
+      <p className="max-w-full truncate text-sm font-medium" title={entry.user.fullname}>
+        {entry.user.fullname}
+      </p>
+      {entry.cohorts.length > 0 ? (
+        <p className="max-w-full truncate text-[11px] text-muted" title={entry.cohorts.join(', ')}>
+          {entry.cohorts.join(', ')}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function CompletionRings({ data, config }: { data: CompletionRingsData; config: RingOptions }) {
+  if (data.entries.length === 0) {
+    return (
+      <EmptyState
+        icon={<CircleDashed className="h-6 w-6" />}
+        title="Nobody to show"
+        hint="No student is enrolled in the selected courses, or nobody is in the selected cohorts."
+      />
+    );
+  }
+
+  const tile = RING_PX[config.ringSize] + 32;
+
+  return (
+    <div className="space-y-3">
+      {config.showLegend ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+          {data.courses.map((course, index) => (
+            <span key={course.id} className="flex items-center gap-1.5" title={course.fullname}>
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: LINE_COLORS[index % LINE_COLORS.length] }}
+              />
+              {course.shortname}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* auto-fill rather than a fixed column count: the same widget has to read on a
+          quarter-width tile and across a whole Full HD screen. */}
+      <div
+        className="grid gap-3"
+        style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${tile}px, 1fr))` }}
+      >
+        {data.entries.map((entry) => (
+          <PersonRing key={entry.user.id} entry={entry} colors={LINE_COLORS} options={config} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 export function autoTitle(widget: Widget, data: Payload | null): string {
   if (data && data.type !== 'error') {
@@ -855,6 +1059,10 @@ export function autoTitle(widget: Widget, data: Payload | null): string {
         return data.user.fullname;
       case 'progress_chart':
         return data.metric === 'badges' ? 'Badges over time' : 'Completion over time';
+      case 'completion_rings':
+        return data.courses.length === 1 && data.courses[0]
+          ? `Progress — ${data.courses[0].fullname}`
+          : 'Progress rings';
     }
   }
   const labels: Record<Widget['type'], string> = {
@@ -865,6 +1073,7 @@ export function autoTitle(widget: Widget, data: Payload | null): string {
     leaderboard: 'Leaderboard',
     user_list: 'User',
     progress_chart: 'Over time',
+    completion_rings: 'Progress rings',
   };
   return labels[widget.type];
 }
@@ -909,6 +1118,12 @@ export const WIDGET_META: Record<
     description:
       'Badges or completion plotted over the last week, one line per student — names or profile pictures at the front of each line.',
     icon: TrendingUp,
+  },
+  completion_rings: {
+    label: 'Progress rings',
+    description:
+      'One ring per person, split into a coloured segment per course — with overdue activities in red and a tick for where their cohort should be by now.',
+    icon: CircleDashed,
   },
 };
 
@@ -998,6 +1213,8 @@ export function WidgetBody({
       return <UserList data={data} density={density} badgeSize={badgeSize} />;
     case 'progress_chart':
       return <ProgressChart data={data} config={chartOptionsOf(widget.config)} />;
+    case 'completion_rings':
+      return <CompletionRings data={data} config={ringOptionsOf(widget.config)} />;
     default:
       return null;
   }

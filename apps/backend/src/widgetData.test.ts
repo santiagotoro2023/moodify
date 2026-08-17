@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type {
   BadgeCardsData,
+  CompletionRingsData,
   CompletionTableData,
   CourseOverviewData,
   LeaderboardData,
@@ -9,8 +10,9 @@ import type {
   ProgressChartData,
   UserListData,
 } from '@moodify/shared';
+import { deadlineDueAt, deadlineNextDueAt, nthWeekdayOf } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
-import { foldEvents } from './widgetData.ts';
+import { foldDeadlines, foldEvents } from './widgetData.ts';
 
 /**
  * Pure unit tests for the public-route anonymisation rules. The SQL side of
@@ -71,11 +73,11 @@ test('completion_table rows are relabelled in place, cells untouched', () => {
     rows: [
       {
         user: user(7, 'Zoe'),
-        cells: [{ courseId: 5, activitiesTotal: 4, activitiesCompleted: 2, percent: 50 }],
+        cells: [{ courseId: 5, activitiesTotal: 4, activitiesCompleted: 2, percent: 50, overdue: 0 }],
       },
       {
         user: user(3, 'Amir'),
-        cells: [{ courseId: 5, activitiesTotal: 0, activitiesCompleted: 0, percent: null }],
+        cells: [{ courseId: 5, activitiesTotal: 0, activitiesCompleted: 0, percent: null, overdue: 0 }],
       },
     ],
   };
@@ -103,14 +105,15 @@ test('one user keeps one label across every array in a single call', () => {
   const data: BadgeCardsData = {
     type: 'badge_cards',
     users: [
-      { user: user(9, 'Nia'), badges: [], percent: null },
+      { user: user(9, 'Nia'), badges: [], percent: null, overdue: 0 },
       {
         user: user(4, 'Ben'),
         badges: [{ id: 1, name: 'Starter', description: null, courseId: null, imageUrl: null }],
         percent: null,
+        overdue: 0,
       },
       // Same person again — e.g. holding both a course and a site-wide badge.
-      { user: user(9, 'Nia'), badges: [], percent: null },
+      { user: user(9, 'Nia'), badges: [], percent: null, overdue: 0 },
     ],
   };
 
@@ -160,7 +163,7 @@ test('user_list relabels its single user and keeps badges and completion', () =>
     completion: [
       {
         course,
-        entry: { courseId: 5, activitiesTotal: 3, activitiesCompleted: 3, percent: 100 },
+        entry: { courseId: 5, activitiesTotal: 3, activitiesCompleted: 3, percent: 100, overdue: 0 },
       },
     ],
   };
@@ -324,4 +327,103 @@ test('course_overview carries no personal data and passes through unchanged', ()
     trackedActivityCount: 8,
   };
   assert.deepEqual(anonymizeWidgetData(data), data);
+});
+
+// ---------------------------------------------------------------------------
+// Deadlines
+// ---------------------------------------------------------------------------
+
+const SEPTEMBER_FIRST_MONDAY = { month: 9, weekday: 1, nth: 1 };
+const DECEMBER_FIRST_MONDAY = { month: 12, weekday: 1, nth: 1 };
+
+/** Local midday, so the assertions are not a timezone puzzle. */
+const day = (iso: string): Date => new Date(`${iso}T12:00:00`);
+
+test('nthWeekdayOf finds the first Monday in September across years', () => {
+  // 2026-09-07, 2025-09-01 and 2024-09-02 are all the first Monday of their September.
+  assert.equal(nthWeekdayOf(2026, SEPTEMBER_FIRST_MONDAY).getDate(), 7);
+  assert.equal(nthWeekdayOf(2025, SEPTEMBER_FIRST_MONDAY).getDate(), 1);
+  assert.equal(nthWeekdayOf(2024, SEPTEMBER_FIRST_MONDAY).getDate(), 2);
+  // End of the day: "by the first Monday" includes all of that Monday.
+  assert.equal(nthWeekdayOf(2026, SEPTEMBER_FIRST_MONDAY).getHours(), 23);
+});
+
+test('nthWeekdayOf handles "last" and clamps an nth the month does not have', () => {
+  assert.equal(nthWeekdayOf(2026, { month: 9, weekday: 1, nth: -1 }).getDate(), 28);
+  // September 2026 has four Mondays; a fifth clamps to the fourth rather than spilling
+  // into October, which would silently move the deadline a month.
+  assert.equal(nthWeekdayOf(2026, { month: 9, weekday: 1, nth: 5 }).getDate(), 28);
+});
+
+test('a rule only comes into force at its first occurrence after it was created', () => {
+  const created = day('2026-06-01');
+  // Still June: the September occurrence has not happened, and last September predates
+  // the rule — so nothing is due yet.
+  assert.equal(deadlineDueAt(SEPTEMBER_FIRST_MONDAY, created, day('2026-06-15')), null);
+  // October: this year's occurrence has passed and it is after created_at.
+  const due = deadlineDueAt(SEPTEMBER_FIRST_MONDAY, created, day('2026-10-01'));
+  assert.equal(due?.getFullYear(), 2026);
+  // Next June, the rule is still measured against September 2026, not reset.
+  assert.equal(
+    deadlineDueAt(SEPTEMBER_FIRST_MONDAY, created, day('2027-06-15'))?.getFullYear(),
+    2026,
+  );
+});
+
+test('deadlineNextDueAt always points forward', () => {
+  assert.equal(deadlineNextDueAt(SEPTEMBER_FIRST_MONDAY, day('2026-06-15')).getFullYear(), 2026);
+  assert.equal(deadlineNextDueAt(SEPTEMBER_FIRST_MONDAY, day('2026-10-01')).getFullYear(), 2027);
+});
+
+test('foldDeadlines counts due and overdue activities per course and user', () => {
+  const created = day('2025-01-01');
+  const facts = foldDeadlines(
+    [
+      // Past its date and not done → overdue.
+      { courseId: 5, userId: 7, cmid: 1, rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: false },
+      // Past its date but done → due, not overdue.
+      { courseId: 5, userId: 7, cmid: 2, rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: true },
+      // Written down in January, first December still ahead → a deadline, but not due.
+      { courseId: 5, userId: 7, cmid: 3, rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
+    ],
+    day('2026-10-01'),
+  );
+  assert.deepEqual(facts.get('5:7'), { total: 3, due: 2, overdue: 1 });
+});
+
+test('foldDeadlines lets the strictest cohort win when two claim one activity', () => {
+  const rows = [
+    // Same activity via a cohort whose deadline is not in force yet...
+    { courseId: 5, userId: 7, cmid: 1, rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
+    // ...and via one whose deadline has passed. Two groups must not buy an extension.
+    { courseId: 5, userId: 7, cmid: 1, rule: SEPTEMBER_FIRST_MONDAY, createdAt: day('2025-01-01'), completed: false },
+  ];
+  assert.deepEqual(foldDeadlines(rows, day('2026-10-01')).get('5:7'), { total: 1, due: 1, overdue: 1 });
+  // Order of the rows must not change the verdict.
+  assert.deepEqual(foldDeadlines([...rows].reverse(), day('2026-10-01')).get('5:7'), {
+    total: 1,
+    due: 1,
+    overdue: 1,
+  });
+});
+
+test('completion_rings anonymises names but keeps cohort labels', () => {
+  const data: CompletionRingsData = {
+    type: 'completion_rings',
+    courses: [course],
+    entries: [
+      {
+        user: user(7, 'Zoe'),
+        cohorts: ['1. Lehrjahr'],
+        segments: [{ course, percent: 50, targetPercent: 25, overdue: 1 }],
+        overdue: 1,
+        percent: 50,
+      },
+    ],
+  };
+  const anon = anonymizeWidgetData(data) as CompletionRingsData;
+  assert.equal(anon.entries[0]?.user.fullname, 'Student 1');
+  assert.equal(anon.entries[0]?.user.email, null);
+  assert.deepEqual(anon.entries[0]?.cohorts, ['1. Lehrjahr']);
+  assert.equal(anon.entries[0]?.segments[0]?.percent, 50);
 });

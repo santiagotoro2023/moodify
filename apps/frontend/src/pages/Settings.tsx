@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  DEADLINE_WS_FUNCTIONS,
   DEFAULT_LOGO_HEIGHT,
+  MONTH_NAMES,
   REQUIRED_WS_FUNCTIONS,
+  WEEKDAY_NAMES,
+  describeDeadlineRule,
   type BootstrapState,
+  type Cohort,
   type ConnectionState,
+  type Course,
+  type CourseActivity,
+  type Deadline,
   type SyncProgress,
 } from '@moodify/shared';
-import { CheckCircle2, RefreshCw } from 'lucide-react';
+import { CalendarClock, CheckCircle2, RefreshCw, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage, relativeTime } from '@/lib/api';
 import { Button, Card, ErrorNote, Input, Label, Select, Spinner } from '@/ui';
 
@@ -59,6 +67,7 @@ export default function Settings() {
 
       <ConnectionCard connection={connection} onChanged={load} />
       <SyncCard connection={connection} onChanged={load} />
+      <DeadlinesCard />
       <AccessCard publicBaseUrl={publicBaseUrl} onChanged={load} />
       <BrandingCard logoUrl={logoUrl} logoHeight={logoHeight} onChanged={load} />
     </div>
@@ -359,6 +368,243 @@ function SyncCard({
 }
 
 /** Where Moodify is reached from outside — public share links are built from this. */
+/**
+ * Deadlines: "this activity, for this cohort, by the first Monday in September".
+ *
+ * Stored as a recurrence rule rather than a date so it rolls into the next year on its
+ * own, measured against whoever is in the cohort at that point. A rule takes effect at
+ * its first occurrence after it was saved — otherwise entering one in June would report
+ * the whole class overdue since last September the moment you pressed Add.
+ */
+function DeadlinesCard() {
+  const [deadlines, setDeadlines] = useState<Deadline[] | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [cohorts, setCohorts] = useState<Cohort[]>([]);
+  const [activities, setActivities] = useState<CourseActivity[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const [courseId, setCourseId] = useState('');
+  const [cmid, setCmid] = useState('');
+  const [cohortId, setCohortId] = useState('');
+  const [nth, setNth] = useState('1');
+  const [weekday, setWeekday] = useState('1');
+  const [month, setMonth] = useState('9');
+
+  const load = useCallback(async () => {
+    try {
+      const [d, c, co] = await Promise.all([
+        api.get<Deadline[]>('/api/deadlines'),
+        api.get<Course[]>('/api/courses'),
+        api.get<Cohort[]>('/api/cohorts'),
+      ]);
+      setDeadlines(d);
+      setCourses(c);
+      setCohorts(co);
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Activities belong to one course, so the second dropdown reloads whenever the first
+  // changes — and the chosen activity is cleared, since it cannot survive the move.
+  useEffect(() => {
+    setCmid('');
+    if (courseId === '') {
+      setActivities([]);
+      return;
+    }
+    void api
+      .get<CourseActivity[]>(`/api/courses/${courseId}/activities`)
+      .then(setActivities)
+      .catch((err: unknown) => setError(errorMessage(err)));
+  }, [courseId]);
+
+  const add = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post('/api/deadlines', {
+        courseId: Number(courseId),
+        cmid: Number(cmid),
+        cohortId: Number(cohortId),
+        month: Number(month),
+        weekday: Number(weekday),
+        nth: Number(nth),
+      });
+      setCmid('');
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id: number) => {
+    try {
+      await api.del(`/api/deadlines/${id}`);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
+  const complete = courseId !== '' && cmid !== '' && cohortId !== '';
+
+  return (
+    <Card className="space-y-4">
+      <h2 className="flex items-center gap-2 font-medium">
+        <CalendarClock className="h-4 w-4 text-muted" />
+        Deadlines
+      </h2>
+      <p className="text-xs text-muted">
+        An activity that has to be finished by a given date, per cohort. Anything past its
+        date and not completed turns the student's completion bar and ring segment red, and
+        sets the target mark on the Progress rings widget. Needs{' '}
+        {DEADLINE_WS_FUNCTIONS.join(', ')} on the Moodle External Service.
+      </p>
+
+      {cohorts.length === 0 ? (
+        <p className="rounded-xl border border-warn/40 bg-warn/10 p-3 text-xs text-warn">
+          No cohorts have been synced yet, so there is nothing to set a deadline for. Add
+          the three functions above to the External Service in Moodle, then run a full
+          re-sync.
+        </p>
+      ) : (
+        <div className="space-y-3 rounded-xl border border-edge p-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="dl-course">Course</Label>
+              <Select id="dl-course" value={courseId} onChange={(e) => setCourseId(e.target.value)}>
+                <option value="">Select a course…</option>
+                {courses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {course.fullname}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="dl-activity">Activity</Label>
+              <Select
+                id="dl-activity"
+                value={cmid}
+                disabled={courseId === ''}
+                onChange={(e) => setCmid(e.target.value)}
+              >
+                <option value="">
+                  {courseId === ''
+                    ? 'Pick a course first'
+                    : activities.length === 0
+                      ? 'No activities synced for this course'
+                      : 'Select an activity…'}
+                </option>
+                {activities.map((activity) => (
+                  <option key={activity.cmid} value={activity.cmid}>
+                    {activity.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="dl-cohort">Cohort</Label>
+            <Select id="dl-cohort" value={cohortId} onChange={(e) => setCohortId(e.target.value)}>
+              <option value="">Select a cohort…</option>
+              {cohorts.map((cohort) => (
+                <option key={cohort.id} value={cohort.id}>
+                  {cohort.name} ({cohort.memberCount})
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <Label htmlFor="dl-nth">Due, every year</Label>
+            <div className="grid grid-cols-3 gap-2">
+              <Select id="dl-nth" value={nth} onChange={(e) => setNth(e.target.value)}>
+                <option value="1">First</option>
+                <option value="2">Second</option>
+                <option value="3">Third</option>
+                <option value="4">Fourth</option>
+                <option value="5">Fifth</option>
+                <option value="-1">Last</option>
+              </Select>
+              <Select value={weekday} onChange={(e) => setWeekday(e.target.value)}>
+                {WEEKDAY_NAMES.map((name, index) => (
+                  <option key={name} value={index}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+              <Select value={month} onChange={(e) => setMonth(e.target.value)}>
+                {MONTH_NAMES.map((name, index) => (
+                  <option key={name} value={index + 1}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <p className="mt-1 text-xs text-muted">
+              Takes effect at its first occurrence after you add it, then repeats yearly.
+            </p>
+          </div>
+
+          <Button onClick={() => void add()} disabled={!complete || busy}>
+            {busy ? <Spinner className="h-4 w-4" /> : null}
+            Add deadline
+          </Button>
+        </div>
+      )}
+
+      {deadlines === null ? (
+        <Spinner />
+      ) : deadlines.length === 0 ? (
+        <p className="text-xs text-muted">No deadlines set.</p>
+      ) : (
+        <ul className="space-y-2">
+          {deadlines.map((deadline) => (
+            <li
+              key={deadline.id}
+              className="flex items-start gap-3 rounded-xl border border-edge p-3 text-sm"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium">{deadline.activityName}</p>
+                <p className="truncate text-xs text-muted">
+                  {deadline.courseName} · {deadline.cohortName} ·{' '}
+                  {describeDeadlineRule(deadline)}
+                </p>
+                <p className="text-xs text-muted">
+                  {deadline.dueAt === null
+                    ? `Not in force yet — first due ${new Date(deadline.nextDueAt).toLocaleDateString()}`
+                    : `Due since ${new Date(deadline.dueAt).toLocaleDateString()} · next ${new Date(deadline.nextDueAt).toLocaleDateString()}`}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Delete deadline"
+                onClick={() => void remove(deadline.id)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error ? <ErrorNote message={error} /> : null}
+    </Card>
+  );
+}
+
 function AccessCard({
   publicBaseUrl,
   onChanged,
