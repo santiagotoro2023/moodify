@@ -335,6 +335,8 @@ test('course_overview carries no personal data and passes through unchanged', ()
 
 const SEPTEMBER_FIRST_MONDAY = { month: 9, weekday: 1, nth: 1 };
 const DECEMBER_FIRST_MONDAY = { month: 12, weekday: 1, nth: 1 };
+/** A one-off calendar date needs no anchoring — it says exactly what it means. */
+const FIXED_DATE = { date: '2026-03-15' };
 
 /** Local midday, so the assertions are not a timezone puzzle. */
 const day = (iso: string): Date => new Date(`${iso}T12:00:00`);
@@ -370,9 +372,20 @@ test('a rule only comes into force at its first occurrence after it was created'
   );
 });
 
-test('deadlineNextDueAt always points forward', () => {
-  assert.equal(deadlineNextDueAt(SEPTEMBER_FIRST_MONDAY, day('2026-06-15')).getFullYear(), 2026);
-  assert.equal(deadlineNextDueAt(SEPTEMBER_FIRST_MONDAY, day('2026-10-01')).getFullYear(), 2027);
+test('deadlineNextDueAt rolls a yearly rule forward and expires a one-off date', () => {
+  assert.equal(deadlineNextDueAt(SEPTEMBER_FIRST_MONDAY, day('2026-06-15'))?.getFullYear(), 2026);
+  assert.equal(deadlineNextDueAt(SEPTEMBER_FIRST_MONDAY, day('2026-10-01'))?.getFullYear(), 2027);
+  assert.equal(deadlineNextDueAt(FIXED_DATE, day('2026-01-01'))?.getDate(), 15);
+  assert.equal(deadlineNextDueAt(FIXED_DATE, day('2026-04-01')), null);
+});
+
+test('a one-off date is due from the end of that day, whenever it was created', () => {
+  // Created today, dated yesterday: overdue immediately, unlike a yearly rule. An
+  // explicit date is not something the anchor should second-guess.
+  assert.notEqual(deadlineDueAt(FIXED_DATE, day('2026-06-01'), day('2026-06-01')), null);
+  // Still the morning of the 15th → not yet due; "by the 15th" includes all of it.
+  assert.equal(deadlineDueAt(FIXED_DATE, day('2026-01-01'), day('2026-03-15')), null);
+  assert.notEqual(deadlineDueAt(FIXED_DATE, day('2026-01-01'), day('2026-03-16')), null);
 });
 
 test('foldDeadlines counts due and overdue activities per course and user', () => {
@@ -407,23 +420,23 @@ test('foldDeadlines lets the strictest cohort win when two claim one activity', 
   });
 });
 
-test('completion_rings anonymises names but keeps cohort labels', () => {
+test('completion_rings anonymises names and strips the profile picture', () => {
   const data: CompletionRingsData = {
     type: 'completion_rings',
     courses: [course],
     entries: [
       {
-        user: user(7, 'Zoe'),
-        cohorts: ['1. Lehrjahr'],
+        user: { ...user(7, 'Zoe'), avatarUrl: '/api/user-image/7' },
         segments: [{ course, percent: 50, targetPercent: 25, overdue: 1 }],
         overdue: 1,
         percent: 50,
+        badges: [],
       },
     ],
   };
   const anon = anonymizeWidgetData(data) as CompletionRingsData;
   assert.equal(anon.entries[0]?.user.fullname, 'Student 1');
   assert.equal(anon.entries[0]?.user.email, null);
-  assert.deepEqual(anon.entries[0]?.cohorts, ['1. Lehrjahr']);
+  assert.equal(anon.entries[0]?.user.avatarUrl, null);
   assert.equal(anon.entries[0]?.segments[0]?.percent, 50);
 });

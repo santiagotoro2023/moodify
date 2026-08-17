@@ -22,16 +22,35 @@ import { sql } from '../db.ts';
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 const courseIdParam = z.object({ courseId: z.coerce.number().int().positive() });
 
-const deadlineBodySchema = z.object({
-  courseId: z.number().int().positive(),
-  cmid: z.number().int().positive(),
-  cohortId: z.number().int().positive(),
-  month: z.number().int().min(1).max(12),
-  /** Sunday = 0, matching Date#getDay. */
-  weekday: z.number().int().min(0).max(6),
-  /** 1-5, or -1 for "the last one in the month". */
-  nth: z.number().int().min(-1).max(5).refine((value) => value !== 0, 'nth cannot be 0'),
-});
+/** A task is due on one fixed date, or on a yearly rule — never both. */
+const deadlineBodySchema = z
+  .object({
+    courseId: z.number().int().positive(),
+    cmid: z.number().int().positive(),
+    /** null = the task applies to everyone in the course. */
+    cohortId: z.number().int().positive().nullable().default(null),
+    /** yyyy-mm-dd. */
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+    month: z.number().int().min(1).max(12).nullable().default(null),
+    /** Sunday = 0, matching Date#getDay. */
+    weekday: z.number().int().min(0).max(6).nullable().default(null),
+    /** 1-5, or -1 for "the last one in the month". */
+    nth: z
+      .number()
+      .int()
+      .min(-1)
+      .max(5)
+      .refine((value) => value !== 0, 'nth cannot be 0')
+      .nullable()
+      .default(null),
+  })
+  .refine(
+    (body) =>
+      body.date !== null
+        ? body.month === null && body.weekday === null && body.nth === null
+        : body.month !== null && body.weekday !== null && body.nth !== null,
+    'Set either a fixed date or a complete yearly rule, not both.',
+  );
 
 type DeadlineRow = {
   id: number;
@@ -39,17 +58,32 @@ type DeadlineRow = {
   course_name: string;
   cmid: number;
   activity_name: string;
-  moodle_cohort_id: number;
-  cohort_name: string;
-  month: number;
-  weekday: number;
-  nth: number;
+  moodle_cohort_id: number | null;
+  cohort_name: string | null;
+  due_date: Date | null;
+  month: number | null;
+  weekday: number | null;
+  nth: number | null;
   created_at: Date;
 };
 
+/** Postgres `date` comes back as a Date at local midnight; we store and compare yyyy-mm-dd. */
+function toDateString(value: Date | null): string | null {
+  if (value === null) return null;
+  const month = `${value.getMonth() + 1}`.padStart(2, '0');
+  const day = `${value.getDate()}`.padStart(2, '0');
+  return `${value.getFullYear()}-${month}-${day}`;
+}
+
 function toDeadline(row: DeadlineRow, now: Date): Deadline {
-  const rule = { month: row.month, weekday: row.weekday, nth: row.nth };
+  const rule = {
+    date: toDateString(row.due_date),
+    month: row.month,
+    weekday: row.weekday,
+    nth: row.nth,
+  };
   const due = deadlineDueAt(rule, row.created_at, now);
+  const next = deadlineNextDueAt(rule, now);
   return {
     id: row.id,
     courseId: row.moodle_course_id,
@@ -60,7 +94,7 @@ function toDeadline(row: DeadlineRow, now: Date): Deadline {
     cohortName: row.cohort_name,
     ...rule,
     dueAt: due === null ? null : due.toISOString(),
-    nextDueAt: deadlineNextDueAt(rule, now).toISOString(),
+    nextDueAt: next === null ? null : next.toISOString(),
   };
 }
 
@@ -110,16 +144,17 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/api/deadlines', auth, async (): Promise<Deadline[]> => {
     const { rows } = await sql<DeadlineRow>(
+      // Left join on cohorts: a task with no cohort applies to the whole course.
       `select d.id, d.moodle_course_id, co.fullname as course_name,
               d.cmid, ca.name as activity_name,
               d.moodle_cohort_id, ch.name as cohort_name,
-              d.month, d.weekday, d.nth, d.created_at
+              d.due_date, d.month, d.weekday, d.nth, d.created_at
          from deadlines d
          join courses co on co.moodle_course_id = d.moodle_course_id
          join course_activities ca
            on ca.moodle_course_id = d.moodle_course_id and ca.cmid = d.cmid
-         join cohorts ch on ch.moodle_cohort_id = d.moodle_cohort_id
-        order by co.fullname asc, ca.name asc, ch.name asc`,
+         left join cohorts ch on ch.moodle_cohort_id = d.moodle_cohort_id
+        order by co.fullname asc, ca.name asc, ch.name asc nulls first`,
     );
     const now = new Date();
     return rows.map((row) => toDeadline(row, now));
@@ -144,21 +179,27 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
         error: 'Moodify does not know that activity. Run a full re-sync, then try again.',
       });
     }
-    const { rows: cohort } = await sql<{ ok: number }>(
-      `select 1 as ok from cohorts where moodle_cohort_id = $1`,
-      [body.cohortId],
-    );
-    if (cohort.length === 0) {
-      return reply.code(409).send({ error: 'That cohort no longer exists in Moodle.' });
+    if (body.cohortId !== null) {
+      const { rows: cohort } = await sql<{ ok: number }>(
+        `select 1 as ok from cohorts where moodle_cohort_id = $1`,
+        [body.cohortId],
+      );
+      if (cohort.length === 0) {
+        return reply.code(409).send({ error: 'That cohort no longer exists in Moodle.' });
+      }
     }
 
     const { rows } = await sql<{ id: number }>(
-      `insert into deadlines (moodle_course_id, cmid, moodle_cohort_id, month, weekday, nth)
-       values ($1, $2, $3, $4, $5, $6)
-       on conflict (moodle_course_id, cmid, moodle_cohort_id) do update
-          set month = excluded.month, weekday = excluded.weekday, nth = excluded.nth
+      `insert into deadlines
+         (moodle_course_id, cmid, moodle_cohort_id, due_date, month, weekday, nth)
+       values ($1, $2, $3, $4::date, $5, $6, $7)
+       on conflict (moodle_course_id, cmid, coalesce(moodle_cohort_id, 0)) do update
+          set due_date = excluded.due_date,
+              month    = excluded.month,
+              weekday  = excluded.weekday,
+              nth      = excluded.nth
        returning id`,
-      [body.courseId, body.cmid, body.cohortId, body.month, body.weekday, body.nth],
+      [body.courseId, body.cmid, body.cohortId, body.date, body.month, body.weekday, body.nth],
     );
     return reply.code(201).send({ id: rows[0]?.id ?? null });
   });

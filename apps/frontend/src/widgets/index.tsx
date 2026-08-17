@@ -26,7 +26,7 @@ import {
   Trophy,
   User,
 } from 'lucide-react';
-import type { BadgeSize, ChartMarker, Density, RingSize } from '@moodify/shared';
+import type { BadgeSize, ChartMarker, Density, RingMarker, RingSize } from '@moodify/shared';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, EmptyState, ErrorNote, Spinner } from '@/ui';
 
@@ -857,21 +857,29 @@ function UserList({
 // ---------------------------------------------------------------------------
 
 /** Outer diameter of one person's ring, in px. */
-const RING_PX: Record<RingSize, number> = { small: 88, medium: 120, large: 164 };
+const RING_PX: Record<RingSize, number> = { small: 96, medium: 128, large: 172 };
 
 interface RingOptions {
   ringSize: RingSize;
+  marker: RingMarker;
   showTarget: boolean;
   showLegend: boolean;
+  showBadges: boolean;
+  badgeSize: BadgeSize;
 }
 
 function ringOptionsOf(config: unknown): RingOptions {
   const raw = (config ?? {}) as Record<string, unknown>;
   const size = raw.ringSize;
+  const marker = raw.marker;
+  const badge = raw.badgeSize;
   return {
     ringSize: (size === 'small' || size === 'large' ? size : 'medium') as RingSize,
+    marker: (marker === 'avatar' || marker === 'both' ? marker : 'name') as RingMarker,
     showTarget: raw.showTarget !== false,
     showLegend: raw.showLegend !== false,
+    showBadges: raw.showBadges === true,
+    badgeSize: (badge === 'medium' || badge === 'large' ? badge : 'small') as BadgeSize,
   };
 }
 
@@ -888,32 +896,105 @@ function arcPath(cx: number, cy: number, r: number, from: number, to: number): s
 }
 
 /**
- * One person: a ring cut into one segment per course, each filled to that course's
- * completion in that course's colour. A segment holding an overdue activity is drawn in
- * red instead — the only thing on this widget that is a judgement rather than a reading.
+ * The one-line verdict under the name. Overdue outranks everything — it is the only
+ * hard fact here; ahead/behind is measured against the deadlines that exist, so a course
+ * with none contributes nothing rather than dragging the average toward zero.
+ *
+ * Five points of slack either way: a target computed from whole activities moves in
+ * jumps, and calling someone "behind" for being 1% off a step function is noise.
+ */
+function ringStatus(entry: CompletionRingsEntry): { text: string; className: string } | null {
+  if (entry.overdue > 0) {
+    return { text: overdueLabel(entry.overdue), className: 'text-bad' };
+  }
+  const measured = entry.segments.filter(
+    (segment) => segment.targetPercent !== null && segment.percent !== null,
+  );
+  if (measured.length === 0) return null;
+
+  const delta =
+    measured.reduce((sum, s) => sum + ((s.percent ?? 0) - (s.targetPercent ?? 0)), 0) /
+    measured.length;
+  if (delta >= 5) return { text: `${Math.round(delta)}% ahead of plan`, className: 'text-good' };
+  if (delta <= -5) return { text: `${Math.round(-delta)}% behind plan`, className: 'text-warn' };
+  return { text: 'On plan', className: 'text-muted' };
+}
+
+/** Per-course rows: colour, course, percentage, and how it sits against its deadline. */
+function SegmentRows({
+  entry,
+  colorOf,
+}: {
+  entry: CompletionRingsEntry;
+  colorOf: (courseId: number) => string;
+}) {
+  return (
+    <dl className="w-full space-y-0.5 text-[11px]">
+      {entry.segments.map((segment) => (
+        <div key={segment.course.id} className="flex items-center gap-1.5">
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ background: colorOf(segment.course.id) }}
+          />
+          <dt className="min-w-0 flex-1 truncate text-muted" title={segment.course.fullname}>
+            {segment.course.shortname}
+          </dt>
+          <dd className="shrink-0 tabular-nums">
+            {segment.percent === null ? '—' : `${Math.round(segment.percent)}%`}
+          </dd>
+          {segment.overdue > 0 ? (
+            <dd className="shrink-0 text-bad" title={overdueLabel(segment.overdue)}>
+              !{segment.overdue}
+            </dd>
+          ) : null}
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/**
+ * One person: a ring cut into a segment per course they are enrolled in, each filled to
+ * that course's completion in that course's colour. A segment holding an overdue
+ * activity is drawn in red — the only thing here that is a judgement rather than a
+ * reading — and a tick marks where their deadlines say they should be by today.
  */
 function PersonRing({
   entry,
-  colors,
+  colorOf,
   options,
+  instance,
 }: {
   entry: CompletionRingsEntry;
-  colors: string[];
+  colorOf: (courseId: number) => string;
   options: RingOptions;
+  instance: string;
 }) {
   const size = RING_PX[options.ringSize];
   const stroke = Math.max(8, Math.round(size * 0.11));
   const radius = (size - stroke) / 2;
   const center = size / 2;
+  const inner = size - stroke * 2 - 6;
   const slice = (Math.PI * 2) / Math.max(1, entry.segments.length);
   // Enough of a gap to read the segments apart, but never so much that a two-course
   // ring looks like two unrelated arcs.
   const gap = Math.min(0.12, slice * 0.14);
 
+  const withAvatar = options.marker === 'avatar' || options.marker === 'both';
+  const avatar = entry.user.avatarUrl ? assetUrl(entry.user.avatarUrl) : null;
+  const status = ringStatus(entry);
+
+  // Percentages live in the middle of the ring — unless a face is sitting there, in
+  // which case they move to the rows underneath and nothing is lost.
+  const centreFont = withAvatar
+    ? 0
+    : Math.min(inner * 0.3, (inner * 0.86) / (entry.segments.length * 1.3));
+  const centreLine = centreFont * 1.3;
+
   return (
     <div
       className={cn(
-        'flex flex-col items-center gap-1.5 rounded-xl border p-3 text-center',
+        'flex flex-col items-center gap-1 rounded-xl border p-3 text-center',
         entry.overdue > 0 ? 'border-bad/40 bg-bad/5' : 'border-edge/60 bg-white/3',
       )}
     >
@@ -926,7 +1007,9 @@ function PersonRing({
           const from = index * slice + gap / 2;
           const to = (index + 1) * slice - gap / 2;
           const span = to - from;
-          const color = segment.overdue > 0 ? '#f43f5e' : colors[index % colors.length] ?? '#38bdf8';
+          // Colour comes from the course, not from where it lands in this person's ring:
+          // someone enrolled in only the third course must still get the third colour.
+          const color = segment.overdue > 0 ? '#f43f5e' : colorOf(segment.course.id);
           const fraction = (segment.percent ?? 0) / 100;
           const targetAngle =
             segment.targetPercent === null ? null : from + span * (segment.targetPercent / 100);
@@ -955,7 +1038,7 @@ function PersonRing({
                   </title>
                 </path>
               ) : null}
-              {/* Where the cohort's deadlines say this person should be by today. */}
+              {/* Where the deadlines say this person should be by today. */}
               {options.showTarget && targetAngle !== null ? (
                 <line
                   x1={center + (radius - stroke / 2) * Math.sin(targetAngle)}
@@ -964,37 +1047,95 @@ function PersonRing({
                   y2={center - (radius + stroke / 2) * Math.cos(targetAngle)}
                   stroke="#e6edf3"
                   strokeWidth={2}
-                  opacity={0.85}
+                  opacity={0.9}
                 />
               ) : null}
             </g>
           );
         })}
-        <text
-          x={center}
-          y={center}
-          textAnchor="middle"
-          dominantBaseline="central"
-          className="fill-ink font-medium tabular-nums"
-          fontSize={Math.round(size * 0.2)}
-        >
-          {entry.percent === null ? '—' : `${Math.round(entry.percent)}%`}
-        </text>
+
+        {withAvatar ? (
+          <>
+            {/* Instance-scoped id: SVG ids are document-global, so two ring widgets on
+                one dashboard would otherwise clip every face against the first one. */}
+            <clipPath id={`${instance}-ring-${entry.user.id}`}>
+              <circle cx={center} cy={center} r={inner / 2} />
+            </clipPath>
+            <circle cx={center} cy={center} r={inner / 2} fill="rgba(255,255,255,0.07)" />
+            {avatar ? (
+              <image
+                href={avatar}
+                x={center - inner / 2}
+                y={center - inner / 2}
+                width={inner}
+                height={inner}
+                preserveAspectRatio="xMidYMid slice"
+                clipPath={`url(#${instance}-ring-${entry.user.id})`}
+              />
+            ) : (
+              <text
+                x={center}
+                y={center}
+                textAnchor="middle"
+                dominantBaseline="central"
+                className="fill-ink font-medium"
+                fontSize={Math.round(inner * 0.34)}
+              >
+                {initials(entry.user.fullname)}
+              </text>
+            )}
+          </>
+        ) : (
+          entry.segments.map((segment, index) => {
+            const y = center - ((entry.segments.length - 1) * centreLine) / 2 + index * centreLine;
+            const blockW = centreFont * 3.4;
+            return (
+              <g key={segment.course.id}>
+                <circle
+                  cx={center - blockW / 2 + centreFont * 0.3}
+                  cy={y}
+                  r={centreFont * 0.22}
+                  fill={segment.overdue > 0 ? '#f43f5e' : colorOf(segment.course.id)}
+                />
+                <text
+                  x={center - blockW / 2 + centreFont}
+                  y={y}
+                  dominantBaseline="central"
+                  className={cn('font-medium tabular-nums', segment.overdue > 0 ? 'fill-bad' : 'fill-ink')}
+                  fontSize={centreFont}
+                >
+                  {segment.percent === null ? '—' : `${Math.round(segment.percent)}%`}
+                  <title>{segment.course.fullname}</title>
+                </text>
+              </g>
+            );
+          })
+        )}
       </svg>
 
-      <p className="max-w-full truncate text-sm font-medium" title={entry.user.fullname}>
-        {entry.user.fullname}
-      </p>
-      {entry.cohorts.length > 0 ? (
-        <p className="max-w-full truncate text-[11px] text-muted" title={entry.cohorts.join(', ')}>
-          {entry.cohorts.join(', ')}
+      {options.marker === 'avatar' ? null : (
+        <p className="max-w-full truncate text-sm font-medium" title={entry.user.fullname}>
+          {entry.user.fullname}
         </p>
+      )}
+      {status ? <p className={cn('text-[11px]', status.className)}>{status.text}</p> : null}
+      {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} /> : null}
+      {options.showBadges ? (
+        <div className="w-full pt-1">
+          <BadgeList badges={entry.badges} badgeSize={options.badgeSize} />
+        </div>
       ) : null}
     </div>
   );
 }
 
 function CompletionRings({ data, config }: { data: CompletionRingsData; config: RingOptions }) {
+  const instance = useId().replace(/:/g, '');
+  const colors = new Map(
+    data.courses.map((course, index) => [course.id, LINE_COLORS[index % LINE_COLORS.length] ?? '#38bdf8']),
+  );
+  const colorOf = (courseId: number) => colors.get(courseId) ?? '#38bdf8';
+
   if (data.entries.length === 0) {
     return (
       <EmptyState
@@ -1005,17 +1146,17 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
     );
   }
 
-  const tile = RING_PX[config.ringSize] + 32;
+  const tile = RING_PX[config.ringSize] + 40;
 
   return (
     <div className="space-y-3">
       {config.showLegend ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-          {data.courses.map((course, index) => (
+          {data.courses.map((course) => (
             <span key={course.id} className="flex items-center gap-1.5" title={course.fullname}>
               <span
                 className="h-2 w-2 shrink-0 rounded-full"
-                style={{ background: LINE_COLORS[index % LINE_COLORS.length] }}
+                style={{ background: colorOf(course.id) }}
               />
               {course.shortname}
             </span>
@@ -1030,7 +1171,13 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
         style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${tile}px, 1fr))` }}
       >
         {data.entries.map((entry) => (
-          <PersonRing key={entry.user.id} entry={entry} colors={LINE_COLORS} options={config} />
+          <PersonRing
+            key={entry.user.id}
+            entry={entry}
+            colorOf={colorOf}
+            options={config}
+            instance={instance}
+          />
         ))}
       </div>
     </div>

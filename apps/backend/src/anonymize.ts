@@ -133,8 +133,6 @@ export function anonymizeWidgetData(data: WidgetData, shared?: Map<number, strin
     }
     case 'completion_rings': {
       const labels = buildLabelsFor(data.entries.map((entry) => entry.user));
-      // Cohort names survive: "1. Lehrjahr" describes a class, not a person, and it is
-      // what makes a public board readable. Nothing else on the tile is identifying.
       return {
         ...data,
         entries: data.entries.map((entry) => ({ ...entry, user: relabel(entry.user, labels) })),

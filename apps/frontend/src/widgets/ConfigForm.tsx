@@ -668,6 +668,23 @@ export function WidgetConfigForm({
               onCheckedChange={(v) => set('showTarget', v)}
             />
           </div>
+          <div>
+            <Label htmlFor={id('ringMarker')}>Identify each ring by</Label>
+            <Select
+              id={id('ringMarker')}
+              value={String(config.marker ?? 'name')}
+              onChange={(e) => set('marker', e.target.value)}
+            >
+              <option value="name">Name — percentages in the middle</option>
+              <option value="avatar">Profile picture only</option>
+              <option value="both">Profile picture and name</option>
+            </Select>
+            <p className="mt-1 text-xs text-muted">
+              A picture takes the middle of the ring, so the per-course percentages move to a
+              list underneath. Students with no picture in Moodle get their initials, and
+              pictures are always hidden on an anonymised public dashboard.
+            </p>
+          </div>
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor={id('ringLegend')} className="mb-0">
               Show legend
@@ -678,6 +695,19 @@ export function WidgetConfigForm({
               onCheckedChange={(v) => set('showLegend', v)}
             />
           </div>
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor={id('ringBadges')} className="mb-0">
+              List badges under each ring
+              <span className="mt-0.5 block text-xs font-normal text-muted">
+                Everything about a person on one tile. Costs a lot of height in a big class.
+              </span>
+            </Label>
+            <Switch
+              id={id('ringBadges')}
+              checked={config.showBadges === true}
+              onCheckedChange={(v) => set('showBadges', v)}
+            />
+          </div>
           {staffToggle()}
           {excludePicker()}
         </>
@@ -686,7 +716,10 @@ export function WidgetConfigForm({
       {widget.type === 'progress_chart' || widget.type === 'completion_rings'
         ? null
         : densityPicker()}
-      {widget.type === 'badge_cards' || widget.type === 'badge_list' || widget.type === 'user_list'
+      {widget.type === 'badge_cards' ||
+      widget.type === 'badge_list' ||
+      widget.type === 'user_list' ||
+      (widget.type === 'completion_rings' && config.showBadges === true)
         ? badgeSizePicker()
         : null}
 

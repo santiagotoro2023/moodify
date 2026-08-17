@@ -194,9 +194,10 @@ type DeadlineRow = {
   moodle_course_id: number;
   moodle_user_id: number;
   cmid: number;
-  month: number;
-  weekday: number;
-  nth: number;
+  due_date: Date | null;
+  month: number | null;
+  weekday: number | null;
+  nth: number | null;
   created_at: Date;
   completed: boolean;
 };
@@ -266,17 +267,24 @@ const NO_DEADLINES: DeadlineFacts = { total: 0, due: 0, overdue: 0 };
  * aggregation into SQL if a deployment ever outgrows that.
  */
 async function loadDeadlineFacts(courseIds: number[] | null): Promise<Map<string, DeadlineFacts>> {
+  // Driven off enrollments, not cohort membership: a task is only somebody's problem if
+  // they are actually in the course. A cohort — when the task names one — narrows that
+  // further; a task with no cohort applies to everyone enrolled.
   const { rows } = await sql<DeadlineRow>(
-    `select d.moodle_course_id, cm.moodle_user_id, d.cmid,
-            d.month, d.weekday, d.nth, d.created_at,
+    `select d.moodle_course_id, e.moodle_user_id, d.cmid,
+            d.due_date, d.month, d.weekday, d.nth, d.created_at,
             (ac.cmid is not null) as completed
        from deadlines d
-       join cohort_members cm on cm.moodle_cohort_id = d.moodle_cohort_id
+       join enrollments e on e.moodle_course_id = d.moodle_course_id
        left join activity_completion ac
          on ac.moodle_course_id = d.moodle_course_id
-        and ac.moodle_user_id   = cm.moodle_user_id
+        and ac.moodle_user_id   = e.moodle_user_id
         and ac.cmid             = d.cmid
-      where $1::int[] is null or d.moodle_course_id = any($1::int[])`,
+      where ($1::int[] is null or d.moodle_course_id = any($1::int[]))
+        and (d.moodle_cohort_id is null
+             or exists (select 1 from cohort_members cm
+                         where cm.moodle_cohort_id = d.moodle_cohort_id
+                           and cm.moodle_user_id = e.moodle_user_id))`,
     [courseIds],
   );
 
@@ -285,7 +293,15 @@ async function loadDeadlineFacts(courseIds: number[] | null): Promise<Map<string
       courseId: row.moodle_course_id,
       userId: row.moodle_user_id,
       cmid: row.cmid,
-      rule: { month: row.month, weekday: row.weekday, nth: row.nth },
+      rule: {
+        date:
+          row.due_date === null
+            ? null
+            : `${row.due_date.getFullYear()}-${`${row.due_date.getMonth() + 1}`.padStart(2, '0')}-${`${row.due_date.getDate()}`.padStart(2, '0')}`,
+        month: row.month,
+        weekday: row.weekday,
+        nth: row.nth,
+      },
       createdAt: row.created_at,
       completed: row.completed,
     })),
@@ -1035,10 +1051,9 @@ async function progressChart(
 // completion_rings — one ring per person, one segment per course.
 // ---------------------------------------------------------------------------
 
-type RingUserRow = UserRow & { cohorts: string[] };
-
 async function completionRings(
   config: WidgetConfig['completion_rings'],
+  avatarBase: string,
 ): Promise<WidgetData | WidgetDataError> {
   if (config.courseIds.length === 0) {
     return fail('No courses selected for this widget.');
@@ -1059,12 +1074,8 @@ async function completionRings(
   if (courses.length === 0) return fail(COURSE_GONE);
   const courseIds = courses.map((course) => course.id);
 
-  const { rows: userRows } = await sql<RingUserRow>(
-    `select distinct u.moodle_user_id, u.fullname, u.email,
-            coalesce((select array_agg(co.name order by co.name)
-                        from cohort_members m
-                        join cohorts co on co.moodle_cohort_id = m.moodle_cohort_id
-                       where m.moodle_user_id = u.moodle_user_id), '{}') as cohorts
+  const { rows: userRows } = await sql<UserRow>(
+    `select distinct u.moodle_user_id, u.fullname, u.email, u.avatar_image_path
        from enrollments e
        join moodle_users u on u.moodle_user_id = e.moodle_user_id
       where e.moodle_course_id = any($1::int[])
@@ -1078,37 +1089,70 @@ async function completionRings(
     [courseIds, config.includeStaff, config.excludeUserIds, config.cohortIds],
   );
   if (userRows.length === 0) return { type: 'completion_rings', courses, entries: [] };
+  const userIds = userRows.map((row) => row.moodle_user_id);
+
+  // Which of the selected courses each person is actually in. A ring must only show
+  // courses its owner can open — three empty segments for courses they were never
+  // enrolled in read as "has done nothing", which is the opposite of the truth.
+  const { rows: enrolled } = await sql<{ moodle_course_id: number; moodle_user_id: number }>(
+    `select moodle_course_id, moodle_user_id
+       from enrollments
+      where moodle_course_id = any($1::int[]) and moodle_user_id = any($2::int[])
+        and ${studentFilter('$3')}`,
+    [courseIds, userIds, config.includeStaff],
+  );
+  const isEnrolled = new Set(enrolled.map((row) => `${row.moodle_course_id}:${row.moodle_user_id}`));
 
   const { rows: cellRows } = await sql<CellRow>(
     `select moodle_course_id, moodle_user_id, activities_total, activities_completed, percent_complete
        from completion_snapshot
       where moodle_course_id = any($1::int[])
         and moodle_user_id = any($2::int[])`,
-    [courseIds, userRows.map((row) => row.moodle_user_id)],
+    [courseIds, userIds],
   );
   const cells = new Map(cellRows.map((row) => [`${row.moodle_course_id}:${row.moodle_user_id}`, row]));
   const deadlines = await loadDeadlineFacts(courseIds);
 
+  const badgesByUser = new Map<number, Badge[]>();
+  if (config.showBadges) {
+    const { rows: badgeRows } = await sql<UserBadgeRow>(
+      `select bi.moodle_user_id, b.moodle_badge_id, b.moodle_course_id,
+              b.name, b.description, b.cached_image_path
+         from badge_issued bi
+         join badges b on b.moodle_badge_id = bi.moodle_badge_id
+        where bi.moodle_user_id = any($1::int[])
+          and (b.moodle_course_id = any($2::int[]) or b.moodle_course_id is null)
+        order by b.name asc, b.moodle_badge_id asc`,
+      [userIds, courseIds],
+    );
+    for (const row of badgeRows) {
+      const list = badgesByUser.get(row.moodle_user_id) ?? [];
+      list.push(toBadge(row));
+      badgesByUser.set(row.moodle_user_id, list);
+    }
+  }
+
   const entries: CompletionRingsEntry[] = userRows.map((row) => {
-    const segments: RingSegment[] = courses.map((course) => {
-      const key = `${course.id}:${row.moodle_user_id}`;
-      const cell = cells.get(key);
-      const facts = deadlines.get(key) ?? NO_DEADLINES;
-      return {
-        course,
-        percent: cell?.percent_complete ?? null,
-        targetPercent: targetPercent(facts, cell?.activities_total ?? 0),
-        overdue: facts.overdue,
-      };
-    });
+    const segments: RingSegment[] = courses
+      .filter((course) => isEnrolled.has(`${course.id}:${row.moodle_user_id}`))
+      .map((course) => {
+        const key = `${course.id}:${row.moodle_user_id}`;
+        const cell = cells.get(key);
+        const facts = deadlines.get(key) ?? NO_DEADLINES;
+        return {
+          course,
+          percent: cell?.percent_complete ?? null,
+          targetPercent: targetPercent(facts, cell?.activities_total ?? 0),
+          overdue: facts.overdue,
+        };
+      });
 
     const tracked = segments
       .map((segment) => segment.percent)
       .filter((percent): percent is number => percent !== null);
 
     return {
-      user: toUser(row),
-      cohorts: row.cohorts,
+      user: toUserWithAvatar(row, avatarBase),
       segments,
       overdue: segments.reduce((sum, segment) => sum + segment.overdue, 0),
       // Unweighted mean of the tracked courses, matching every other widget: a
@@ -1117,6 +1161,7 @@ async function completionRings(
         tracked.length === 0
           ? null
           : Math.round((tracked.reduce((sum, value) => sum + value, 0) / tracked.length) * 100) / 100,
+      badges: badgesByUser.get(row.moodle_user_id) ?? [],
     };
   });
 
@@ -1179,7 +1224,10 @@ export async function resolveWidgetData(
       case 'progress_chart':
         return await progressChart(parseWidgetConfig('progress_chart', widget.config), avatarBase);
       case 'completion_rings':
-        return await completionRings(parseWidgetConfig('completion_rings', widget.config));
+        return await completionRings(
+          parseWidgetConfig('completion_rings', widget.config),
+          avatarBase,
+        );
       default:
         return fail(`Unknown widget type "${String(widget.type)}".`);
     }

@@ -158,6 +158,14 @@ export const RING_SIZES = ['small', 'medium', 'large'] as const;
 export type RingSize = (typeof RING_SIZES)[number];
 
 /**
+ * How a ring says whose it is. With 'name' the middle of the ring is free for the
+ * per-course percentages; the avatar modes take that space, so the percentages move to a
+ * list under the name.
+ */
+export const RING_MARKERS = ['name', 'avatar', 'both'] as const;
+export type RingMarker = (typeof RING_MARKERS)[number];
+
+/**
  * One ring per person, split into one segment per selected course. Each segment is
  * filled to that course's completion in that course's own colour, so a person who has
  * finished everything shows a full, fully coloured ring.
@@ -173,9 +181,13 @@ export const completionRingsConfig = z.object({
   sortBy: z.enum(['name', 'percent', 'overdue']).default('name'),
   sortDir,
   ringSize: z.enum(RING_SIZES).default('medium'),
+  marker: z.enum(RING_MARKERS).default('name'),
   /** Draw the "where you should be by now" tick inside each segment. */
   showTarget: z.boolean().default(true),
   showLegend: z.boolean().default(true),
+  /** List every badge the person holds under their ring. */
+  showBadges: z.boolean().default(false),
+  badgeSize,
   includeStaff: z.boolean().default(false),
   excludeUserIds,
 });
@@ -452,19 +464,26 @@ export interface RingSegment {
 
 export interface CompletionRingsEntry {
   user: MoodleUser;
-  /** Cohort names the person belongs to, shown under the name when several are on screen. */
-  cohorts: string[];
-  /** One per selected course, in the widget's configured order. */
+  /**
+   * Only the selected courses this person is actually enrolled in, in the widget's
+   * configured order. Someone in one course out of four gets a single full ring rather
+   * than three empty segments for courses they cannot even open.
+   */
   segments: RingSegment[];
-  /** Total overdue across the segments, for sorting and the badge on the tile. */
+  /** Total overdue across the segments, for sorting and the tile's status line. */
   overdue: number;
-  /** Mean of the tracked segments — the number in the middle of the ring. */
+  /** Mean of the tracked segments. Used for sorting, not shown as a headline. */
   percent: number | null;
+  /** Empty unless the widget has `showBadges` on. */
+  badges: Badge[];
 }
 
 export interface CompletionRingsData {
   type: 'completion_rings';
-  /** The segment order, and the legend. Colour is assigned by index. */
+  /**
+   * Every selected course, in configured order — the legend, and the source of each
+   * course's colour. An entry's segments are a subset of these.
+   */
   courses: Course[];
   entries: CompletionRingsEntry[];
 }
@@ -541,13 +560,35 @@ export const MONTH_NAMES = [
   'December',
 ] as const;
 
-export interface DeadlineRule {
+/** The yearly half of a rule: "the nth weekday of a month". */
+export interface YearlyRule {
   /** 1-12. */
   month: number;
   /** 0-6, Sunday = 0. */
   weekday: number;
   /** 1-5, or -1 for "the last one in the month". */
   nth: number;
+}
+
+/**
+ * When a task is due. Exactly one of the two forms is filled in:
+ *  - `date` set → a one-off calendar date, "done by 15 March 2027".
+ *  - the yearly fields set → "the first Monday in September, every year".
+ */
+export interface DeadlineRule {
+  /** yyyy-mm-dd, or null when this is a yearly rule. */
+  date?: string | null;
+  month?: number | null;
+  weekday?: number | null;
+  nth?: number | null;
+}
+
+function isYearly(rule: DeadlineRule): rule is DeadlineRule & YearlyRule {
+  return (
+    typeof rule.month === 'number' &&
+    typeof rule.weekday === 'number' &&
+    typeof rule.nth === 'number'
+  );
 }
 
 export interface Deadline extends DeadlineRule {
@@ -557,12 +598,22 @@ export interface Deadline extends DeadlineRule {
   cmid: number;
   /** From course_activities; falls back to "Activity <cmid>" if the sync has not seen it. */
   activityName: string;
-  cohortId: number;
-  cohortName: string;
-  /** The occurrence currently in force (ISO), or null while the rule is still upcoming. */
+  /** null = the task applies to every student in the course, not one cohort. */
+  cohortId: number | null;
+  cohortName: string | null;
+  /** The occurrence currently in force (ISO), or null while it is still upcoming. */
   dueAt: string | null;
-  /** The next occurrence (ISO), always set. */
-  nextDueAt: string;
+  /** The next occurrence (ISO), or null for a one-off date that has already passed. */
+  nextDueAt: string | null;
+}
+
+/** End of a yyyy-mm-dd day in local time — "by the 15th" includes all of the 15th. */
+function endOfDay(date: string): Date | null {
+  const [year, month, day] = date.split('-').map(Number);
+  if (year === undefined || month === undefined || day === undefined) return null;
+  // Not new Date('2026-09-07'): that is parsed as UTC midnight, which lands on the 6th
+  // for anyone west of Greenwich.
+  return new Date(year, month - 1, day, 23, 59, 59, 999);
 }
 
 /**
@@ -572,7 +623,7 @@ export interface Deadline extends DeadlineRule {
  * An nth that does not exist (a fifth Monday in a month with four) clamps to the last
  * one, which is the only reading that does not silently skip a year.
  */
-export function nthWeekdayOf(year: number, rule: DeadlineRule): Date {
+export function nthWeekdayOf(year: number, rule: YearlyRule): Date {
   const first = new Date(year, rule.month - 1, 1);
   const offset = (rule.weekday - first.getDay() + 7) % 7;
   const lastOfMonth = new Date(year, rule.month, 0).getDate();
@@ -588,27 +639,39 @@ export function nthWeekdayOf(year: number, rule: DeadlineRule): Date {
 }
 
 /**
- * The occurrence a rule is currently being measured against, or null when it has none
- * yet. Everything before this instant is due; everything after it is not.
+ * The moment a task is currently being measured against, or null when it has none yet.
+ * Everything before this instant is due; everything after it is not.
  *
- * `createdAt` anchors the rule. A yearly rule has, mathematically, always already
- * occurred, so without an anchor a deadline entered in June would report the whole
- * cohort overdue since last September the moment it was saved. The rule takes effect at
- * its first occurrence after it was written down.
+ * A one-off date needs no anchor — it says exactly what it means. A yearly rule does:
+ * mathematically it has always already occurred, so without one a rule entered in June
+ * would report the whole cohort overdue since last September the moment it was saved.
+ * `createdAt` makes it take effect at its first occurrence after it was written down.
  */
 export function deadlineDueAt(rule: DeadlineRule, createdAt: Date, now: Date): Date | null {
+  if (rule.date != null) {
+    const at = endOfDay(rule.date);
+    return at !== null && at <= now ? at : null;
+  }
+  if (!isYearly(rule)) return null;
   const thisYear = nthWeekdayOf(now.getFullYear(), rule);
   const inForce = thisYear <= now ? thisYear : nthWeekdayOf(now.getFullYear() - 1, rule);
   return inForce > createdAt ? inForce : null;
 }
 
-/** The next occurrence, whether or not the rule is in force yet. */
-export function deadlineNextDueAt(rule: DeadlineRule, now: Date): Date {
+/** The next occurrence, or null for a one-off date that is already behind us. */
+export function deadlineNextDueAt(rule: DeadlineRule, now: Date): Date | null {
+  if (rule.date != null) {
+    const at = endOfDay(rule.date);
+    return at !== null && at > now ? at : null;
+  }
+  if (!isYearly(rule)) return null;
   const thisYear = nthWeekdayOf(now.getFullYear(), rule);
   return thisYear > now ? thisYear : nthWeekdayOf(now.getFullYear() + 1, rule);
 }
 
 export function describeDeadlineRule(rule: DeadlineRule): string {
+  if (rule.date != null) return endOfDay(rule.date)?.toLocaleDateString() ?? rule.date;
+  if (!isYearly(rule)) return 'no date set';
   const which = rule.nth < 0 ? 'last' : ['first', 'second', 'third', 'fourth', 'fifth'][rule.nth - 1];
   return `${which ?? rule.nth} ${WEEKDAY_NAMES[rule.weekday] ?? '?'} in ${MONTH_NAMES[rule.month - 1] ?? '?'}, yearly`;
 }

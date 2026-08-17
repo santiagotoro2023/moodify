@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { DEFAULT_LOGO_HEIGHT, type BootstrapState } from '@moodify/shared';
-import { AlertTriangle, LayoutDashboard, LogOut, PlugZap, RefreshCw, Settings as Cog } from 'lucide-react';
+import { AlertTriangle, CalendarClock, LayoutDashboard, LogOut, PlugZap, RefreshCw, Settings as Cog } from 'lucide-react';
 import { api, cn, errorMessage, relativeTime } from '@/lib/api';
 import { Button, Card, ErrorNote, Spinner } from '@/ui';
 import DashboardPage from '@/pages/DashboardPage';
 import Login from '@/pages/Login';
 import PublicDashboard from '@/pages/PublicDashboard';
 import Settings from '@/pages/Settings';
+import Tasks from '@/pages/Tasks';
 import Wizard from '@/pages/Wizard';
 
 const DEFAULT_LOGO = '/brand/moodify-logo.svg';
@@ -114,6 +115,7 @@ function AppLayout({ children }: { children: ReactNode }) {
           />
           <nav className="flex items-center gap-1">
             {navLink('/dashboards', 'Dashboards', <LayoutDashboard className="h-4 w-4" />)}
+            {navLink('/tasks', 'Tasks', <CalendarClock className="h-4 w-4" />)}
             {navLink('/settings', 'Settings', <Cog className="h-4 w-4" />)}
           </nav>
           <div className="ml-auto">
@@ -219,6 +221,14 @@ export default function App() {
         element={
           <AdminRoute>
             <DashboardPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/tasks"
+        element={
+          <AdminRoute>
+            <Tasks />
           </AdminRoute>
         }
       />
