@@ -242,10 +242,21 @@ in one person's ring, so the legend holds for everybody. Selecting no courses at
 visible one, matching the `scope: all` default the other widgets use; with the per-person filter on
 top, that is already a sensible board.
 
-**Red is not a completion colour in a ring.** Rings have their own ten-hue palette, brighter than
-the chart's because a segment is a thick arc rather than a 2px line, and with nothing red or rose in
-it. If the fourth course were simply coloured red, a class where everyone is on track would look
-identical to a class where everyone has failed that course.
+**Red is not a completion colour in a ring.** Segment colours are generated from the number of
+courses on screen rather than taken from a list: hues spaced evenly across a 30°–330° band, so four
+courses land 75° apart and eight land 37° apart, and nothing ever falls in the red the overdue state
+owns. A fixed list has to wrap, and any list long enough not to wrap ends up holding four things
+that all read as "blue" — sky, cyan, indigo and teal are distinct on a swatch and identical in a
+12px arc across the room. If a course were simply coloured red, a class where everyone is on track
+would look identical to a class where everyone has failed that course.
+
+**Rings fill their column.** The SVG carries a viewBox and no fixed pixel size, and the grid uses
+`auto-fit`, so empty tracks collapse and widening the widget grows the rings instead of the gaps.
+"Ring size" therefore sets how densely the wall packs before it wraps, not a literal diameter.
+Everything inside — stroke, text, avatar — is expressed in viewBox units, so a tile scales as one
+piece. The per-course rows under each ring are a grid with fixed side columns padded out to the
+busiest person's course count, so the numbers line up across every tile and the badges start at the
+same height: a table read across a wall, without the ruled lines.
 
 The tick inside a segment is the target: the share of that course's activities whose deadline for
 that person has already passed. No task in a course means no tick, not a tick at zero. Under the

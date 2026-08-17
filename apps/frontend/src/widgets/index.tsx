@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
   BadgeCardsData,
   BadgeListData,
@@ -148,22 +148,42 @@ function BadgeImage({ badge, size }: { badge: BadgeType; size: string }) {
 /**
  * Icon + full name as one chip. Names sit beside the icon rather than under it, so
  * they show in full without each badge costing a whole block of height.
+ *
+ * `uniform` swaps the flex wrap for a grid, so every chip is the same width whatever its
+ * name is and long names truncate instead of stretching. Under a ring that matters: a row
+ * of chips at four different widths reads as clutter, and there is a tooltip for the full
+ * name. Left alone elsewhere, where a chip hugging its name is the better shape.
  */
-function BadgeList({ badges, badgeSize }: { badges: BadgeType[]; badgeSize: BadgeSize }) {
+function BadgeList({
+  badges,
+  badgeSize,
+  uniform,
+}: {
+  badges: BadgeType[];
+  badgeSize: BadgeSize;
+  uniform?: boolean;
+}) {
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
   const { icon, text, pad } = BADGE_SIZE[badgeSize];
   return (
-    <ul className="flex flex-wrap gap-2">
+    <ul
+      className={cn('gap-2', uniform ? 'grid' : 'flex flex-wrap')}
+      style={
+        uniform ? { gridTemplateColumns: 'repeat(auto-fill, minmax(9rem, 1fr))' } : undefined
+      }
+    >
       {badges.map((badge) => (
         <li
           key={badge.id}
-          className={cn('flex items-center gap-2 rounded-full bg-white/6', pad)}
+          className={cn('flex items-center gap-2 rounded-full bg-white/6', pad, uniform && 'min-w-0')}
           title={badge.description ?? badge.name}
         >
           <BadgeImage badge={badge} size={icon} />
-          <span className={cn('leading-snug', text)}>{badge.name}</span>
+          <span className={cn('leading-snug', text, uniform && 'min-w-0 truncate')}>
+            {badge.name}
+          </span>
         </li>
       ))}
     </ul>
@@ -184,28 +204,32 @@ const LINE_COLORS = [
 const OVERDUE_COLOR = '#f43f5e';
 
 /**
- * Ring segment colours — its own palette, not the chart's.
+ * Segment colours, generated from the number of courses on screen rather than picked
+ * from a fixed list.
  *
- * Brighter than the line colours because a ring segment is a thick arc on a dark card
- * rather than a 2px line, and ten hues instead of eight so a wall of rings covering a
- * dozen courses stays readable.
+ * A fixed list has to wrap, and any list long enough not to wrap immediately ends up
+ * holding four things that all read as "blue" — sky, cyan, indigo and teal are distinct
+ * on a swatch and identical in a 12px arc across the room. Spacing the hues evenly over
+ * however many courses are actually shown guarantees the largest gap the palette can
+ * give: four courses land 75° apart, eight land 37° apart.
  *
- * Nothing red or rose is in here, deliberately. A red segment means a missed deadline; if
- * the fourth course were simply coloured red, a class where everyone is on track would
- * look exactly like a class where everyone has failed that course.
+ * The band runs 30°–330°, so nothing ever lands in the red the overdue state owns. The
+ * alternating lightness is for the high end, where neighbouring hues get close enough
+ * that a brightness step does more work than the hue difference does.
+ *
+ * Adding a course therefore re-colours the ring. The legend is generated from the same
+ * function, so it always agrees — and a wrapping list would have re-coloured things too,
+ * just less predictably.
  */
-const RING_COLORS = [
-  '#38bdf8', // sky
-  '#a78bfa', // violet
-  '#34d399', // emerald
-  '#fbbf24', // amber
-  '#22d3ee', // cyan
-  '#e879f9', // fuchsia
-  '#a3e635', // lime
-  '#fb923c', // orange
-  '#818cf8', // indigo
-  '#2dd4bf', // teal
-];
+const RING_HUE_START = 30;
+const RING_HUE_SPAN = 300;
+const RING_MAX_HUES = 12;
+
+function ringColorAt(index: number, total: number): string {
+  const step = RING_HUE_SPAN / Math.min(Math.max(total, 1), RING_MAX_HUES);
+  const hue = (RING_HUE_START + index * step) % 360;
+  return `hsl(${hue.toFixed(1)} 78% ${index % 2 === 0 ? 62 : 72}%)`;
+}
 
 /** Diameter of the avatar marker, in px. Same three steps as the badge icons. */
 const AVATAR_PX: Record<BadgeSize, number> = { small: 20, medium: 30, large: 44 };
@@ -883,7 +907,14 @@ function UserList({
 // completion_rings
 // ---------------------------------------------------------------------------
 
-/** Outer diameter of one person's ring, in px. */
+/**
+ * The minimum width of one person's tile, which is what "ring size" now controls: how
+ * densely the wall packs before it wraps. The ring itself fills whatever width the column
+ * ends up with, so a wider widget means bigger rings rather than more empty space.
+ *
+ * Doubles as the SVG's viewBox extent — an arbitrary coordinate space, kept equal to the
+ * minimum so strokes and text are proportioned for the smallest size they will be drawn at.
+ */
 const RING_PX: Record<RingSize, number> = { small: 96, medium: 128, large: 172 };
 
 interface RingOptions {
@@ -947,34 +978,52 @@ function ringStatus(entry: CompletionRingsEntry): { text: string; className: str
   return { text: 'On plan', className: 'text-muted' };
 }
 
-/** Per-course rows: colour, course, percentage, and how it sits against its deadline. */
+/**
+ * Per-course rows: colour, course, percentage, overdue count.
+ *
+ * Laid out as one grid with fixed side columns, not as flex rows, so the numbers sit at
+ * the same x on every tile — a table read across a wall of them, without the ruled lines
+ * an actual table would bring. `rows` pads every tile out to the busiest person's course
+ * count, which keeps the tiles the same height and lines the badges up underneath.
+ */
 function SegmentRows({
   entry,
   colorOf,
+  rows,
 }: {
   entry: CompletionRingsEntry;
   colorOf: (courseId: number) => string;
+  rows: number;
 }) {
+  const padding = Math.max(0, rows - entry.segments.length);
   return (
-    <dl className="w-full space-y-0.5 text-[11px]">
+    <dl
+      className="grid w-full items-center gap-x-1.5 gap-y-0.5 text-[11px]"
+      style={{ gridTemplateColumns: 'auto minmax(0, 1fr) 2.4rem 1.3rem' }}
+    >
       {entry.segments.map((segment) => (
-        <div key={segment.course.id} className="flex items-center gap-1.5">
+        <Fragment key={segment.course.id}>
           <span
-            className="h-2 w-2 shrink-0 rounded-full"
+            className="h-2 w-2 rounded-full"
             style={{ background: colorOf(segment.course.id) }}
           />
-          <dt className="min-w-0 flex-1 truncate text-muted" title={segment.course.fullname}>
+          <dt className="truncate text-muted" title={segment.course.fullname}>
             {segment.course.shortname}
           </dt>
-          <dd className="shrink-0 tabular-nums">
+          <dd className="text-right tabular-nums">
             {segment.percent === null ? '—' : `${Math.round(segment.percent)}%`}
           </dd>
-          {segment.overdue > 0 ? (
-            <dd className="shrink-0 text-bad" title={overdueLabel(segment.overdue)}>
-              !{segment.overdue}
-            </dd>
-          ) : null}
-        </div>
+          <dd
+            className="text-right tabular-nums text-bad"
+            title={segment.overdue > 0 ? overdueLabel(segment.overdue) : undefined}
+          >
+            {segment.overdue > 0 ? `!${segment.overdue}` : ''}
+          </dd>
+        </Fragment>
+      ))}
+      {/* Blank rows so every tile is the same height whatever its course count. */}
+      {Array.from({ length: padding }, (_, index) => (
+        <span key={`pad-${index}`} className="col-span-4 h-[1.15em]" aria-hidden="true" />
       ))}
     </dl>
   );
@@ -991,9 +1040,12 @@ function PersonRing({
   colorOf,
   options,
   instance,
+  rows,
 }: {
   entry: CompletionRingsEntry;
   colorOf: (courseId: number) => string;
+  /** Course count of the busiest person, so every tile reserves the same room. */
+  rows: number;
   options: RingOptions;
   instance: string;
 }) {
@@ -1025,7 +1077,10 @@ function PersonRing({
         entry.overdue > 0 ? 'border-bad/40 bg-bad/5' : 'border-edge/60 bg-white/3',
       )}
     >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img">
+      {/* No width/height: the viewBox is a coordinate space, and w-full lets the ring grow
+          to whatever the column gives it. Everything inside — stroke, text, avatar — is
+          expressed in those units, so the whole tile scales as one piece. */}
+      <svg className="aspect-square w-full" viewBox={`0 0 ${size} ${size}`} role="img">
         <title>
           {entry.user.fullname}
           {entry.overdue > 0 ? ` — ${overdueLabel(entry.overdue)}` : ''}
@@ -1145,11 +1200,15 @@ function PersonRing({
           {entry.user.fullname}
         </p>
       )}
-      {status ? <p className={cn('text-[11px]', status.className)}>{status.text}</p> : null}
-      {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} /> : null}
+      {/* Always rendered, empty when there is nothing to say: a status line that appears
+          on some tiles and not others shifts everything below it out of alignment. */}
+      <p className={cn('text-[11px]', status?.className ?? 'text-muted')}>
+        {status?.text ?? '\u00a0'}
+      </p>
+      {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} rows={rows} /> : null}
       {options.showBadges ? (
-        <div className="w-full pt-1">
-          <BadgeList badges={entry.badges} badgeSize={options.badgeSize} />
+        <div className="mt-3 w-full">
+          <BadgeList badges={entry.badges} badgeSize={options.badgeSize} uniform />
         </div>
       ) : null}
     </div>
@@ -1159,7 +1218,7 @@ function PersonRing({
 function CompletionRings({ data, config }: { data: CompletionRingsData; config: RingOptions }) {
   const instance = useId().replace(/:/g, '');
   const colors = new Map(
-    data.courses.map((course, index) => [course.id, RING_COLORS[index % RING_COLORS.length] ?? '#38bdf8']),
+    data.courses.map((course, index) => [course.id, ringColorAt(index, data.courses.length)]),
   );
   const colorOf = (courseId: number) => colors.get(courseId) ?? '#38bdf8';
 
@@ -1174,6 +1233,7 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
   }
 
   const tile = RING_PX[config.ringSize] + 40;
+  const rows = Math.max(...data.entries.map((entry) => entry.segments.length));
 
   return (
     <div className="space-y-3">
@@ -1191,11 +1251,13 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
         </div>
       ) : null}
 
-      {/* auto-fill rather than a fixed column count: the same widget has to read on a
-          quarter-width tile and across a whole Full HD screen. */}
+      {/* auto-fit, not auto-fill: empty tracks collapse, so three people on a full-width
+          widget stretch across it and their rings grow with it, rather than huddling at
+          the minimum width with dead space to the right. Ring size sets that minimum —
+          how densely the wall packs — and no longer the literal pixel diameter. */}
       <div
         className="grid gap-3"
-        style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${tile}px, 1fr))` }}
+        style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${tile}px, 1fr))` }}
       >
         {data.entries.map((entry) => (
           <PersonRing
@@ -1204,6 +1266,7 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
             colorOf={colorOf}
             options={config}
             instance={instance}
+            rows={rows}
           />
         ))}
       </div>

@@ -653,6 +653,10 @@ export function WidgetConfigForm({
               <option value="medium">Medium</option>
               <option value="large">Large — readable across a room</option>
             </Select>
+            <p className="mt-1 text-xs text-muted">
+              Sets how densely the rings pack before wrapping. Each ring then fills the
+              width it gets, so widening the widget grows the rings rather than the gaps.
+            </p>
           </div>
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor={id('showTarget')} className="mb-0">
