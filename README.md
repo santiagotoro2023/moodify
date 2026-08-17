@@ -269,6 +269,12 @@ pictures gives that space to the face and moves the percentages to a list undern
 information is traded away for the nicer look. Badges can be listed under each ring too, for a
 board that shows everything about a person on one tile.
 
+**Profile picture resolution.** `core_enrol_get_enrolled_users` always reports the `f1` variant,
+100px, which is visibly soft once a ring fills a wide column. The avatar download asks for `f3`
+first — the 250px retina variant Moodle has generated since 3.2 — and falls back through the other
+sizes where it does not exist. Badge icons keep asking for whatever the exporter handed back first,
+because there the given URL is the one known to work.
+
 **Profile pictures.** Synced from `core_enrol_get_enrolled_users` and cached locally, for the same
 reason badge icons are: `pluginfile.php` needs the web service token, so Moodle can never be
 hotlinked. Moodle sends a URL even for users who never uploaded one — it points at the theme's

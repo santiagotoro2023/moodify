@@ -1181,6 +1181,10 @@ async function completionRings(
     const byName = a.user.fullname.localeCompare(b.user.fullname) || a.user.id - b.user.id;
     if (config.sortBy === 'name') return dir * byName;
     if (config.sortBy === 'overdue') return dir * (a.overdue - b.overdue) || byName;
+    // Segment count, i.e. how many of the selected courses the person is enrolled in.
+    if (config.sortBy === 'courses') {
+      return dir * (a.segments.length - b.segments.length) || byName;
+    }
     // Untracked people sort last in either direction, as they do everywhere else.
     if (a.percent === null && b.percent === null) return byName;
     if (a.percent === null) return 1;

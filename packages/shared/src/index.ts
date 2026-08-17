@@ -182,7 +182,7 @@ export const completionRingsConfig = z.object({
   courseIds: z.array(courseId).max(12).default([]),
   /** Whose rings are drawn. Empty = every student enrolled in the selected courses. */
   cohortIds: z.array(z.number().int().positive()).max(20).default([]),
-  sortBy: z.enum(['name', 'percent', 'overdue']).default('name'),
+  sortBy: z.enum(['name', 'percent', 'overdue', 'courses']).default('name'),
   sortDir,
   ringSize: z.enum(RING_SIZES).default('medium'),
   marker: z.enum(RING_MARKERS).default('name'),

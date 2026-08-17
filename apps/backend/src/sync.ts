@@ -374,7 +374,9 @@ export async function fetchAndStoreAvatar(
   userId: number,
   imageUrl: string,
 ): Promise<void> {
-  const { buffer, contentType } = await downloadImage(conn, imageUrl);
+  // preferLargest: the enrolled-users call always reports the 100px f1, which is soft
+  // once a ring fills a wide column. See sizeVariants.
+  const { buffer, contentType } = await downloadImage(conn, imageUrl, true);
   const filename = `${userId}.${extensionFor(contentType)}`;
   const directory = join(ASSETS_DIR, 'avatars');
   await mkdir(directory, { recursive: true });

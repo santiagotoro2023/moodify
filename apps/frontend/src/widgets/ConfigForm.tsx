@@ -638,6 +638,7 @@ export function WidgetConfigForm({
               { value: 'name', label: 'Name' },
               { value: 'percent', label: 'Overall completion' },
               { value: 'overdue', label: 'Overdue activities' },
+              { value: 'courses', label: 'Number of courses' },
             ],
             'name',
             'asc',

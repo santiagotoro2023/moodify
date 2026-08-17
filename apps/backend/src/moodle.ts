@@ -840,16 +840,24 @@ function withTokenAuth(fileUrl: string, token: string): string {
  * token query param, cache locally.
  */
 /**
- * Both kinds of URL end in a size suffix (`/f1`, `/f2`, `/f3`). Which sizes exist depends
- * on the Moodle version — the exporter can hand back an `f3` that badges_pluginfile()
- * then refuses — so a failed download is retried against the other sizes before giving up.
+ * Both kinds of URL end in a size suffix (`/f1` 100px, `/f2` 35px, `/f3` 250px). Which
+ * sizes exist depends on the Moodle version — the exporter can hand back an `f3` that
+ * badges_pluginfile() then refuses — so a failed download is retried against the other
+ * sizes before giving up.
+ *
+ * `preferLargest` flips the order to try f3 first. Profile pictures need it: Moodle's
+ * enrolled-users call always reports f1, and a 100px image in a ring that fills a
+ * quarter of a Full HD screen is visibly soft. f3 is the retina variant Moodle has
+ * generated since 3.2; where it does not exist the f1 fallback still runs.
  */
-function sizeVariants(imageUrl: string): string[] {
+export function sizeVariants(imageUrl: string, preferLargest = false): string[] {
   const match = /\/f[123](\?|$)/.exec(imageUrl);
   if (match === null) return [imageUrl];
+  const at = (size: string) =>
+    imageUrl.slice(0, match.index) + '/' + size + imageUrl.slice(match.index + 3);
   const current = imageUrl.slice(match.index + 1, match.index + 3);
-  return [imageUrl, ...['f3', 'f2', 'f1'].filter((size) => size !== current)
-    .map((size) => imageUrl.slice(0, match.index) + '/' + size + imageUrl.slice(match.index + 3))];
+  const order = preferLargest ? ['f3', current, 'f2', 'f1'] : [current, 'f3', 'f2', 'f1'];
+  return [...new Set(order)].map(at);
 }
 
 /**
@@ -899,8 +907,9 @@ function refusalError(body: string, contentType: string, token: string): MoodleE
 export async function downloadImage(
   conn: MoodleConnection,
   imageUrl: string,
+  preferLargest = false,
 ): Promise<{ buffer: Buffer; contentType: string }> {
-  const [first, ...rest] = sizeVariants(imageUrl);
+  const [first, ...rest] = sizeVariants(imageUrl, preferLargest);
   let lastError: unknown;
   for (const candidate of [first ?? imageUrl, ...rest]) {
     try {
@@ -1042,5 +1051,14 @@ if (process.argv[1]?.endsWith('moodle.ts')) {
   // A plain pluginfile URL must be rewritten, a webservice one left alone.
   assert.equal(withTokenAuth('https://m.example/pluginfile.php/1/badges/f/x.png', 'abc'), 'https://m.example/webservice/pluginfile.php/1/badges/f/x.png?token=abc');
   assert.equal(withTokenAuth('https://m.example/webservice/pluginfile.php/1/x.png?f=1', 'abc'), 'https://m.example/webservice/pluginfile.php/1/x.png?f=1&token=abc');
+  // Avatars must ask for the 250px f3 before settling for the 100px f1 Moodle reports.
+  assert.deepEqual(sizeVariants('https://m.example/pluginfile.php/1/user/icon/boost/f1?rev=7', true), [
+    'https://m.example/pluginfile.php/1/user/icon/boost/f3?rev=7',
+    'https://m.example/pluginfile.php/1/user/icon/boost/f1?rev=7',
+    'https://m.example/pluginfile.php/1/user/icon/boost/f2?rev=7',
+  ]);
+  // Badges keep asking for what the exporter handed back first.
+  assert.equal(sizeVariants('https://m.example/pluginfile.php/1/badges/f/x/f1', false)[0], 'https://m.example/pluginfile.php/1/badges/f/x/f1');
+  assert.deepEqual(sizeVariants('https://m.example/pluginfile.php/1/badges/f/x.png'), ['https://m.example/pluginfile.php/1/badges/f/x.png']);
   console.log('moodle.ts self-check ok');
 }
