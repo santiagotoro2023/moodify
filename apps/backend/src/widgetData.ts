@@ -1104,9 +1104,11 @@ async function completionRings(
   // courses its owner can open — three empty segments for courses they were never
   // enrolled in read as "has done nothing", which is the opposite of the truth.
   const { rows: enrolled } = await sql<{ moodle_course_id: number; moodle_user_id: number }>(
-    `select moodle_course_id, moodle_user_id
-       from enrollments
-      where moodle_course_id = any($1::int[]) and moodle_user_id = any($2::int[])
+    // Aliased `e` because studentFilter emits `e.roles` — without it Postgres rejects the
+    // whole query with "missing FROM-clause entry for table e" and the widget 500s.
+    `select e.moodle_course_id, e.moodle_user_id
+       from enrollments e
+      where e.moodle_course_id = any($1::int[]) and e.moodle_user_id = any($2::int[])
         and ${studentFilter('$3')}`,
     [courseIds, userIds, config.includeStaff],
   );

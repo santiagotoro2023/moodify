@@ -197,7 +197,10 @@ be any of four.
 
 Dates are always **dd/mm/yyyy**, never `toLocaleDateString`. That follows the browser's locale, so
 the same board on a machine set to en-US reads 09/07/2026 as 7 September and the reader has no way
-to tell which number is the month. A deadline is not a place to be ambiguous about that.
+to tell which number is the month. A deadline is not a place to be ambiguous about that. Entering
+one uses three dropdowns rather than `<input type="date">` for the same reason: that control renders
+in the browser's own locale and neither `lang` nor CSS can override it, whereas a named month cannot
+be misread.
 
 Two ways to say when. A **fixed date** means exactly what it says and counts as overdue from the
 end of that day. A **yearly rule** — "the first Monday in September" — stores (month, weekday, nth)
@@ -239,9 +242,10 @@ in one person's ring, so the legend holds for everybody. Selecting no courses at
 visible one, matching the `scope: all` default the other widgets use; with the per-person filter on
 top, that is already a sensible board.
 
-**Red is not a completion colour in a ring.** The segment palette is the chart palette with the red
-removed. If the fourth course were simply coloured red, a class where everyone is on track would
-look identical to a class where everyone has failed that course.
+**Red is not a completion colour in a ring.** Rings have their own ten-hue palette, brighter than
+the chart's because a segment is a thick arc rather than a 2px line, and with nothing red or rose in
+it. If the fourth course were simply coloured red, a class where everyone is on track would look
+identical to a class where everyone has failed that course.
 
 The tick inside a segment is the target: the share of that course's activities whose deadline for
 that person has already passed. No task in a course means no tick, not a tick at zero. Under the

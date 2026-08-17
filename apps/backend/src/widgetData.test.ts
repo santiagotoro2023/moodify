@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import type {
   BadgeCardsData,
@@ -439,4 +440,13 @@ test('completion_rings anonymises names and strips the profile picture', () => {
   assert.equal(anon.entries[0]?.user.email, null);
   assert.equal(anon.entries[0]?.user.avatarUrl, null);
   assert.equal(anon.entries[0]?.segments[0]?.percent, 50);
+});
+
+test('every enrollments query is aliased e, as studentFilter requires', () => {
+  // studentFilter/excludeFilter emit `e.roles` and `e.moodle_user_id`, so a query that
+  // selects `from enrollments` without the alias is not a style slip — Postgres rejects
+  // it outright and the widget answers 500. That shipped once; this is a two-line guard
+  // rather than the live-Postgres test suite this repo deliberately does not have.
+  const source = readFileSync(new URL('./widgetData.ts', import.meta.url), 'utf8');
+  assert.deepEqual(source.match(/\b(from|join)\s+enrollments(?!\s+e\b)/g), null);
 });

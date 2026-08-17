@@ -184,13 +184,28 @@ const LINE_COLORS = [
 const OVERDUE_COLOR = '#f43f5e';
 
 /**
- * Ring segment colours: the line palette with the red taken out.
+ * Ring segment colours — its own palette, not the chart's.
  *
- * A red segment on a ring means a missed deadline. If the fourth course were simply
- * coloured red, a class where everyone is on track would look like a class where
- * everyone has failed the fourth course, and there would be no way to tell the two apart.
+ * Brighter than the line colours because a ring segment is a thick arc on a dark card
+ * rather than a 2px line, and ten hues instead of eight so a wall of rings covering a
+ * dozen courses stays readable.
+ *
+ * Nothing red or rose is in here, deliberately. A red segment means a missed deadline; if
+ * the fourth course were simply coloured red, a class where everyone is on track would
+ * look exactly like a class where everyone has failed that course.
  */
-const RING_COLORS = LINE_COLORS.filter((color) => color !== OVERDUE_COLOR);
+const RING_COLORS = [
+  '#38bdf8', // sky
+  '#a78bfa', // violet
+  '#34d399', // emerald
+  '#fbbf24', // amber
+  '#22d3ee', // cyan
+  '#e879f9', // fuchsia
+  '#a3e635', // lime
+  '#fb923c', // orange
+  '#818cf8', // indigo
+  '#2dd4bf', // teal
+];
 
 /** Diameter of the avatar marker, in px. Same three steps as the badge icons. */
 const AVATAR_PX: Record<BadgeSize, number> = { small: 20, medium: 30, large: 44 };

@@ -12,7 +12,7 @@ import {
 } from '@moodify/shared';
 import { CalendarClock, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
-import { Button, Card, EmptyState, ErrorNote, Input, Label, Select, Spinner } from '@/ui';
+import { Button, Card, EmptyState, ErrorNote, Label, Select, Spinner } from '@/ui';
 
 /**
  * Tasks: "this activity has to be done by this date".
@@ -29,6 +29,21 @@ import { Button, Card, EmptyState, ErrorNote, Input, Label, Select, Spinner } fr
  * Tasks are listed and picked in Moodle's own course-section order, subsections included,
  * because that is the order the person setting them up sees in Moodle itself.
  */
+
+const DAYS = Array.from({ length: 31 }, (_, index) => index + 1);
+/** Last year through five ahead: enough for a school year, short enough to scroll. */
+const YEARS = Array.from({ length: 7 }, (_, index) => new Date().getFullYear() - 1 + index);
+
+/**
+ * yyyy-mm-dd from the three pickers. A day the month does not have (31 February) is
+ * clamped by Date itself rather than rejected — picking 31 and then switching to
+ * February should not silently submit 3 March.
+ */
+function isoDate(year: string, month: string, day: string): string {
+  const lastOfMonth = new Date(Number(year), Number(month), 0).getDate();
+  const safe = Math.min(Number(day), lastOfMonth);
+  return `${year}-${month.padStart(2, '0')}-${`${safe}`.padStart(2, '0')}`;
+}
 
 /**
  * Groups consecutive items under a heading. Both callers arrive already sorted the way
@@ -68,10 +83,11 @@ export default function Tasks() {
   const [cmid, setCmid] = useState('');
   const [cohortId, setCohortId] = useState('');
   const [mode, setMode] = useState<'date' | 'yearly'>('date');
-  const [date, setDate] = useState('');
+  const [day, setDay] = useState(String(new Date().getDate()));
+  const [year, setYear] = useState(String(new Date().getFullYear()));
   const [nth, setNth] = useState('1');
   const [weekday, setWeekday] = useState('1');
-  const [month, setMonth] = useState('9');
+  const [month, setMonth] = useState(String(new Date().getMonth() + 1));
 
   const load = useCallback(async () => {
     try {
@@ -116,7 +132,7 @@ export default function Tasks() {
         cmid: Number(cmid),
         cohortId: cohortId === '' ? null : Number(cohortId),
         ...(mode === 'date'
-          ? { date }
+          ? { date: isoDate(year, month, day) }
           : { month: Number(month), weekday: Number(weekday), nth: Number(nth) }),
       });
       setCmid('');
@@ -137,7 +153,7 @@ export default function Tasks() {
     }
   };
 
-  const complete = courseId !== '' && cmid !== '' && (mode === 'yearly' || date !== '');
+  const complete = courseId !== '' && cmid !== '';
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
@@ -236,7 +252,32 @@ export default function Tasks() {
           </div>
 
           {mode === 'date' ? (
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            /* Three selects rather than <input type="date">. That control renders in the
+               browser's own locale — mm/dd/yyyy on a US-configured machine — and neither
+               the lang attribute nor CSS can change it. A named month cannot be misread. */
+            <div className="grid grid-cols-3 gap-2">
+              <Select value={day} onChange={(e) => setDay(e.target.value)}>
+                {DAYS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </Select>
+              <Select value={month} onChange={(e) => setMonth(e.target.value)}>
+                {MONTH_NAMES.map((name, index) => (
+                  <option key={name} value={index + 1}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+              <Select value={year} onChange={(e) => setYear(e.target.value)}>
+                {YEARS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </Select>
+            </div>
           ) : (
             <div className="grid grid-cols-3 gap-2">
               <Select value={nth} onChange={(e) => setNth(e.target.value)}>
@@ -265,7 +306,7 @@ export default function Tasks() {
           )}
           <p className="mt-1 text-xs text-muted">
             {mode === 'date'
-              ? 'Counts as overdue from the end of that day.'
+              ? `${formatDay(isoDate(year, month, day))} — counts as overdue from the end of that day.`
               : 'Takes effect at its first occurrence after you add it, then repeats yearly.'}
           </p>
         </div>
