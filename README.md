@@ -146,6 +146,13 @@ at all.
 the configured poll interval (default 60s, minimum 15s). A full re-discovery — new courses, new
 enrolments, new users — runs every 15 minutes, and on demand via **Re-sync now** in Settings.
 
+The split is about *structure*, not freshness. Everything a widget reads about who has done what —
+course percentages, badges, the per-activity rows that section completion and overdue marks are
+counted from — is refreshed on every poll. Only things that did not exist last time round (a new
+course, a new enrolment, an activity added to a section) wait for the full pass. Running full
+discovery on the poll interval instead would not make a single number fresher; it would only re-ask
+Moodle for a course list that has not changed.
+
 **Sync failure.** A failed sync never crashes the worker and never blanks a widget. The error is
 stored on `moodle_connection.last_sync_error`, surfaced as a banner in the admin UI, and the last
 known-good snapshot keeps rendering.
@@ -180,9 +187,11 @@ contributes nothing to a cumulative history, and un-completing something in Mood
 so the line can go down again. And a past percentage is measured against the activities the course
 has **today**: Moodle does not report when an activity was added, so if the teacher added some
 later, early percentages read slightly lower than they did at the time. Progress toward the course
-as it now stands is the more useful reading for a leaderboard anyway. Timestamps are refreshed on
-the full discovery pass only, not every poll — they are historical facts that do not change, so
-re-reading them every 60 seconds would rewrite thousands of rows to learn nothing.
+as it now stands is the more useful reading for a leaderboard anyway. Timestamps are written on
+every poll, not just full discoveries: they cost no extra Moodle traffic — the poller already
+fetches these statuses each pass and used to discard them on light runs — and two later readers,
+section completion in the rings and overdue detection, do care about the last sixty seconds. The
+upsert skips rows whose timestamp has not moved, so a quiet minute writes nothing.
 
 **Tasks.** A task attaches a date to one activity: *Tasks* in the top bar, pick a course, an
 activity, optionally a cohort, and a date. Moodle's own "expected completion" dates are not
@@ -221,8 +230,8 @@ extension. Either way enrolment is required — a cohort member who is not in th
 behind on its work.
 
 An activity counts as overdue when its deadline has passed and `activity_completion` holds no row
-for it. That table is refreshed on the full discovery pass, not every poll, so "overdue" can lag a
-completion by up to fifteen minutes — day-granularity deadlines do not need better than that.
+for it. That table is rewritten on every poll, so an overdue mark clears within one poll interval of
+the student finishing the work.
 
 **Completion bars are one colour.** Light blue for progress, red only when something is overdue.
 Not red/amber/green: a student at 20% in October is not failing, they are early, and colouring them
@@ -254,9 +263,9 @@ per section, each with its own completion, its own tasks and its own colour. Sec
 tick do not appear at all — splitting a course is a statement about what is worth watching, and
 carrying the rest along as a leftover segment would undo the point. Each section takes a legend
 label of your own; leave it blank and Moodle's section name is used. Section completion is counted
-from the activities in that section (`course_activities` × `activity_completion`), which is only
-rewritten on a **full** discovery — so a section bar can lag the whole-course bar beside it by up to
-one full-sync interval.
+from the activities in that section (`course_activities` × `activity_completion`), which the poller
+rewrites on **every** poll — so a section bar is exactly as fresh as the whole-course bar beside it.
+Only course *structure* (a section gaining a new activity) waits for the 15-minute full discovery.
 
 **Red is not a completion colour in a ring.** Segment colours are automatic by default: hues spaced
 evenly across a 30°–330° band sized to however many segments are on screen, so four land 75° apart

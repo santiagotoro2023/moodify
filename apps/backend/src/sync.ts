@@ -6,7 +6,10 @@
  *     Expensive, so it runs on FULL_DISCOVERY_INTERVAL_MS (15 min) or on demand.
  *   - Light sync: the same completion/badge refresh, but only for (user,course) pairs
  *     already in `enrollments`. No course/user discovery. This is what the configurable
- *     poll interval (default 60s) actually runs.
+ *     poll interval (default 60s) actually runs. Everything about *who has completed
+ *     what* — including the per-activity rows the rings widget counts sections from — is
+ *     therefore as fresh as the poll interval. Only *structure* (new courses, users,
+ *     cohorts, activities) waits for a full discovery.
  *
  * Invariants this file must never break:
  *   - A Moodle failure must never crash the process or reject out of the scheduler.
@@ -440,10 +443,20 @@ type SyncTask =
  * Mirrors the *completed* activities of one (course, user) pair, with Moodle's own
  * completion timestamps, into activity_completion.
  *
- * Full runs only. The timestamps are historical facts that do not change between polls,
- * so re-reading them every 60 seconds would rewrite 20k rows a minute to learn nothing;
- * once per full discovery is plenty, and metric_history already covers the live end of
- * the chart at a finer grain.
+ * Runs on every poll, not just full discoveries. This used to be full-only on the grounds
+ * that completion timestamps are historical facts not worth re-reading every minute — true
+ * while the only reader was the all-time chart, which does not care about the last sixty
+ * seconds. It stopped being true when the rings widget started counting section completion
+ * out of this table: a section bar would then sit up to a full-sync interval behind the
+ * whole-course bar next to it, on the same tile.
+ *
+ * Costs no extra Moodle traffic at all — refreshPair already fetches these exact statuses
+ * on every poll and was simply throwing them away on light runs.
+ *
+ * ponytail: a delete plus an upsert per pair per poll, so at the documented ceiling (<50
+ * users × <20 courses) roughly 2k statements a minute against a local Postgres. The
+ * upsert no-ops on unchanged rows; if the write volume ever matters, compare against the
+ * stored set first and skip pairs whose completion has not moved.
  *
  * Un-completing an activity in Moodle has to remove its row, otherwise the all-time line
  * only ever goes up — hence the delete of anything no longer in the completed set.
@@ -475,7 +488,10 @@ async function storeCompletedActivities(
      select $1, $2, entry.cmid, entry.at
        from unnest($3::int[], $4::timestamptz[]) as entry(cmid, at)
      on conflict (moodle_course_id, moodle_user_id, cmid)
-        do update set completed_at = excluded.completed_at`,
+        do update set completed_at = excluded.completed_at
+         -- Most polls re-observe the same completions; skipping the identical write keeps
+         -- this from churning every row of the table once a minute.
+         where activity_completion.completed_at is distinct from excluded.completed_at`,
     [courseId, userId, cmids, times],
   );
 }
@@ -483,7 +499,7 @@ async function storeCompletedActivities(
 async function refreshPair(ctx: RunContext, courseId: number, userId: number): Promise<void> {
   const statuses = await getActivitiesCompletion(ctx.conn, courseId, userId);
   const summary = computeCompletion(statuses);
-  if (ctx.mode === 'full') await storeCompletedActivities(courseId, userId, statuses);
+  await storeCompletedActivities(courseId, userId, statuses);
   await upsertCompletion(
     courseId,
     userId,
