@@ -665,8 +665,31 @@ export interface CourseModule {
   sectionOrder: number;
 }
 
+/** A section of a course, named as it will appear everywhere else. */
+export interface CourseSection {
+  /** Composed label — "Grundlagen › Woche 2" for a subsection. */
+  name: string;
+  /** Position in the course, so a list can follow Moodle's own order. */
+  order: number;
+}
+
 /**
- * core_course_get_contents, reduced to the activities a deadline can be set on.
+ * Moodle leaves a section's name empty when the teacher never set one — most commonly
+ * the course's first, undeletable section, which Moodle renders as "General" in whatever
+ * language the site runs in. An empty label is not something anyone can pick out of a
+ * list, so it gets Moodle's own section number instead. Composed here rather than at the
+ * two call sites so a section and the activities inside it always agree on what it is
+ * called.
+ */
+function sectionLabel(section: unknown, fallbackOrder: number): string {
+  const name = readString(section, 'name') ?? '';
+  if (name !== '') return name;
+  return `Section ${readNumber(section, 'section') ?? fallbackOrder}`;
+}
+
+/**
+ * core_course_get_contents: the course's sections, and the activities a deadline can be
+ * set on.
  *
  * This is the only call that knows what an activity is *called* —
  * core_completion_get_activities_completion_status returns nothing but cmids, so
@@ -676,12 +699,26 @@ export interface CourseModule {
  * Moodle never marks complete could never be met. A module that does not report the
  * field at all is kept — older Moodle versions omit it, and hiding a real activity is
  * worse than listing one extra.
+ *
+ * Sections are returned whole and unfiltered, including the ones left with no trackable
+ * activity in them. They used to be inferred from the activities instead, which meant a
+ * section holding only a completion-less announcements forum — the undeletable first
+ * section of most courses — existed nowhere and could not be picked.
  */
 export async function getCourseContents(
   conn: MoodleConnection,
   courseId: number,
-): Promise<CourseModule[]> {
-  const raw = await callWs<unknown>(conn, 'core_course_get_contents', { courseid: courseId });
+): Promise<{ sections: CourseSection[]; modules: CourseModule[] }> {
+  return parseCourseContents(
+    await callWs<unknown>(conn, 'core_course_get_contents', { courseid: courseId }),
+  );
+}
+
+/** The shaping half of getCourseContents, kept pure so the self-check can drive it. */
+export function parseCourseContents(raw: unknown): {
+  sections: CourseSection[];
+  modules: CourseModule[];
+} {
   const sections = Array.isArray(raw) ? raw : [];
 
   // Moodle 4.5 subsections are not nested in the response: a subsection comes back as its
@@ -690,20 +727,21 @@ export async function getCourseContents(
   // it lives in is the only way to say "Grundlagen › Woche 2" instead of a bare "Woche 2"
   // that could be any of four. Older Moodle has none of this and the map stays empty.
   const parentOf = new Map<number, string>();
-  for (const section of sections) {
-    const sectionName = readString(section, 'name') ?? '';
+  sections.forEach((section, index) => {
+    const sectionName = sectionLabel(section, index + 1);
     for (const entry of readArray(section, 'modules')) {
       if (readString(entry, 'modname') !== 'subsection') continue;
       const instance = readNumber(entry, 'instance');
       if (instance !== null) parentOf.set(instance, sectionName);
     }
-  }
+  });
 
+  const out: CourseSection[] = [];
   const modules: CourseModule[] = [];
   let order = 0;
   for (const section of sections) {
     order += 1;
-    const name = readString(section, 'name') ?? '';
+    const name = sectionLabel(section, order);
     const itemid = readNumber(section, 'itemid');
     const parent =
       readString(section, 'component') === 'mod_subsection' && itemid !== null
@@ -711,6 +749,7 @@ export async function getCourseContents(
         : undefined;
     const label =
       parent !== undefined && parent !== '' ? `${parent}${SECTION_SEPARATOR}${name}` : name;
+    out.push({ name: label, order });
 
     for (const entry of readArray(section, 'modules')) {
       const cmid = readNumber(entry, 'id');
@@ -729,7 +768,7 @@ export async function getCourseContents(
       });
     }
   }
-  return modules;
+  return { sections: out, modules };
 }
 
 export interface ActivityCompletionStatus {
@@ -1061,5 +1100,24 @@ if (process.argv[1]?.endsWith('moodle.ts')) {
   // Badges keep asking for what the exporter handed back first.
   assert.equal(sizeVariants('https://m.example/pluginfile.php/1/badges/f/x/f1', false)[0], 'https://m.example/pluginfile.php/1/badges/f/x/f1');
   assert.deepEqual(sizeVariants('https://m.example/pluginfile.php/1/badges/f/x.png'), ['https://m.example/pluginfile.php/1/badges/f/x.png']);
+  // A course shaped like the one that surfaced the bug: an unnamed first section holding
+  // only a completion-less forum, a section holding nothing but a subsection, and the
+  // subsection itself arriving as a top-level section.
+  const contents = parseCourseContents([
+    { section: 0, name: '', modules: [{ id: 1, name: 'Ankündigungen', modname: 'forum', completion: 0 }] },
+    { section: 1, name: 'Grundkurse', modules: [{ id: 2, modname: 'subsection', instance: 90, completion: 0 }] },
+    { section: 2, name: 'Woche 2', component: 'mod_subsection', itemid: 90, modules: [{ id: 3, name: 'ISO/OSI', modname: 'assign', completion: 1 }] },
+  ]);
+  // Every section is offered, including the two that own nothing trackable — inferring
+  // them from the activities is what hid them.
+  assert.deepEqual(contents.sections.map((section) => section.name), [
+    'Section 0',
+    'Grundkurse',
+    'Grundkurse › Woche 2',
+  ]);
+  // The activity list is still only what a deadline can be set on.
+  assert.deepEqual(contents.modules.map((module) => [module.name, module.section]), [
+    ['ISO/OSI', 'Grundkurse › Woche 2'],
+  ]);
   console.log('moodle.ts self-check ok');
 }

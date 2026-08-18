@@ -350,6 +350,19 @@ export interface Cohort {
   memberCount: number;
 }
 
+/**
+ * One section of a course, for the ring's split picker.
+ *
+ * Every section, including those with nothing trackable in them — unlike CourseActivity,
+ * which by construction only knows about sections that own a tracked activity.
+ */
+export interface CourseSection {
+  /** Already "Parent SECTION_SEPARATOR Subsection" where Moodle nests them. */
+  name: string;
+  /** Moodle's own ordering within the course. */
+  order: number;
+}
+
 /** One completion-trackable activity in a course, for the task picker. */
 export interface CourseActivity {
   courseId: number;

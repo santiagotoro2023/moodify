@@ -5,7 +5,7 @@ import {
   SECTION_SEPARATOR,
   type Cohort,
   type Course,
-  type CourseActivity,
+  type CourseSection,
   type MoodleUser,
   type RingSectionSplit,
   type Widget,
@@ -64,7 +64,8 @@ export function WidgetConfigForm({
 
   // Section names for whichever courses are currently ticked in the rings widget. Fetched
   // here rather than shipped with /api/courses because only this one widget needs them,
-  // and only for the handful of courses actually in the ring.
+  // and only for the handful of courses actually in the ring. The endpoint asks Moodle
+  // directly, so sections with nothing completion-tracked in them are listed too.
   const ringCourseIdsRaw = Array.isArray(config.courseIds) ? (config.courseIds as number[]) : [];
   const ringCourseKey = ringCourseIdsRaw.join(',');
   useEffect(() => {
@@ -73,24 +74,11 @@ export function WidgetConfigForm({
       const wanted = ringCourseKey.split(',').map(Number);
       const loaded = await Promise.all(
         wanted.map(async (courseId) => {
-          const activities = await api.get<CourseActivity[]>(
-            `/api/courses/${courseId}/activities`,
-          );
-          // Already ordered by section_order, so first-seen order is Moodle's own.
-          //
-          // Every ancestor path is offered alongside the full labels. A section holding
-          // nothing but subsections owns no activities, so it appears in no label of its
-          // own — "Grundkurse" would be unselectable while all four of its subsections
-          // were listed. Picking a parent gathers everything under it.
-          const options: string[] = [];
-          for (const activity of activities) {
-            const parts = activity.section.split(SECTION_SEPARATOR);
-            for (let depth = 1; depth <= parts.length; depth += 1) {
-              const path = parts.slice(0, depth).join(SECTION_SEPARATOR);
-              if (path !== '' && !options.includes(path)) options.push(path);
-            }
-          }
-          return [courseId, options] as [number, string[]];
+          // Moodle returns a subsection as a section in its own right, so this list
+          // already holds both the parents and their children — no need to reconstruct
+          // ancestors out of the labels.
+          const found = await api.get<CourseSection[]>(`/api/courses/${courseId}/sections`);
+          return [courseId, found.map((section) => section.name)] as [number, string[]];
         }),
       );
       setSections(Object.fromEntries(loaded));
@@ -334,8 +322,9 @@ export function WidgetConfigForm({
         that course becomes one bar per ticked section, each with its own completion and its
         own tasks — sections you do not tick simply do not appear. Ticking a parent section
         gathers everything nested under it, so you can have one bar for all of it or one per
-        subsection. Only courses ticked above can be split, and a section with no
-        completion-tracked activities is not listed: there would be nothing to fill.
+        subsection. Only courses ticked above can be split. A section with nothing
+        completion-tracked in it can be ticked too — its bar just stays empty until an
+        activity in it gets completion turned on in Moodle.
       </p>
       {ringCourseIds.length === 0 ? (
         <p className="text-xs text-muted">Tick some courses above first.</p>

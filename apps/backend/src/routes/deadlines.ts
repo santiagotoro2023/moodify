@@ -4,10 +4,13 @@ import {
   deadlineNextDueAt,
   type Cohort,
   type CourseActivity,
+  type CourseSection,
   type Deadline,
 } from '@moodify/shared';
 import { z } from 'zod';
 import { requireAdmin } from '../auth.ts';
+import { getCourseContents } from '../moodle.ts';
+import { loadConnection } from '../sync.ts';
 import { sql } from '../db.ts';
 
 /**
@@ -124,6 +127,37 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
       idnumber: row.idnumber,
       memberCount: row.member_count,
     }));
+  });
+
+  /**
+   * Every section of a course, asked of Moodle directly.
+   *
+   * Not read from `course_activities` like the activity list is: that table only holds
+   * activities with completion tracking on, so a section containing none of them — the
+   * undeletable first section of most courses, holding an announcements forum and nothing
+   * else — exists nowhere in Moodify's own data and could never be offered. Sections are
+   * also the one thing here a teacher renames mid-term, and going to Moodle means the
+   * ring's split picker sees that immediately rather than after the next full sync.
+   *
+   * Costs one Moodle call per course, on an admin opening widget settings. Nothing on a
+   * dashboard render depends on it.
+   */
+  app.get('/api/courses/:courseId/sections', auth, async (request, reply) => {
+    const parsed = courseIdParam.safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid course id.' });
+    const conn = await loadConnection();
+    if (conn === null) return reply.code(409).send({ error: 'No Moodle connection configured.' });
+    try {
+      const { sections } = await getCourseContents(conn, parsed.data.courseId);
+      return sections;
+    } catch {
+      // core_course_get_contents is optional (§9.1), so a service without it must degrade
+      // to "no sections to split by" rather than break the whole settings dialog.
+      return reply.code(502).send({
+        error:
+          'Moodle would not list this course\'s sections. The External Service needs core_course_get_contents.',
+      });
+    }
   });
 
   app.get('/api/courses/:courseId/activities', auth, async (request, reply) => {

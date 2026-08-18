@@ -641,7 +641,7 @@ async function syncCohorts(ctx: RunContext): Promise<void> {
 async function syncCourseActivities(ctx: RunContext, courseId: number): Promise<void> {
   let modules;
   try {
-    modules = await getCourseContents(ctx.conn, courseId);
+    modules = (await getCourseContents(ctx.conn, courseId)).modules;
   } catch (err) {
     skipOptional(ctx, err, { step: 'course contents', courseId });
     return;

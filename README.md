@@ -264,16 +264,25 @@ tick do not appear at all — splitting a course is a statement about what is wo
 carrying the rest along as a leftover segment would undo the point. Each section takes a legend
 label of your own; leave it blank and Moodle's section name is used.
 
-**Parent sections are selectable, and gather what is under them.** Section labels are paths —
-`Grundkurse › Woche 2` — because Moodle 4.5 returns a subsection as its own top-level section and
-the parent is only recoverable at sync time. A section holding nothing but subsections therefore
-owns no activities, appears in no label of its own, and was unselectable while all four of its
-children were listed. The picker now offers every ancestor path as well, and a chosen section
-matches itself plus everything nested beneath it (`sectionMatches` in `packages/shared`) — so
-`Grundkurse` is one bar for all of it, or you tick its subsections for one bar each, or both, and an
-activity inside a subsection counts towards both bars because it genuinely belongs to both. The
-match is on the full path segment, so a sibling called `Grundkurse II` is never swept in. A section
-with no completion-tracked activities is not offered at all: there would be nothing to fill. Section completion is counted
+**Every section is offered, and a parent gathers what is under it.** The split picker reads
+`GET /api/courses/:id/sections`, which asks Moodle directly, rather than the sections stored on
+`course_activities`. That table only holds activities with completion tracking on, so sections were
+being *inferred* from their contents: a section whose only content is a completion-less
+announcements forum — the undeletable first section of most courses — existed nowhere and could not
+be picked, and neither could a section holding nothing but subsections. Sections a teacher renames
+mid-term also show up immediately instead of after the next full sync. It costs one Moodle call when
+an admin opens widget settings; nothing on a dashboard render depends on it. A section Moodle leaves
+unnamed is labelled by its own section number, in `getCourseContents` so the label a section is
+offered under and the label its activities are filed under can never disagree.
+
+Section labels are paths — `Grundkurse › Woche 2` — because Moodle 4.5 returns a subsection as its
+own top-level section, and the parent is only recoverable while the whole response is in hand. A
+chosen section matches itself plus everything nested beneath it (`sectionMatches` in
+`packages/shared`), so `Grundkurse` is one bar for all of it, or you tick its subsections for one
+bar each, or both — an activity inside a subsection counts towards both bars because it genuinely
+belongs to both. The match is on whole path segments, so a sibling called `Grundkurse II` is never
+swept into `Grundkurse`. A section with nothing trackable in it can be ticked like any other; its
+bar simply stays empty. Section completion is counted
 from the activities in that section (`course_activities` × `activity_completion`), which the poller
 rewrites on **every** poll — so a section bar is exactly as fresh as the whole-course bar beside it.
 Only course *structure* (a section gaining a new activity) waits for the 15-minute full discovery.
