@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
-import type { Cohort, Course, MoodleUser, Widget } from '@moodify/shared';
-import { api, errorMessage } from '@/lib/api';
+import {
+  RING_COLORS,
+  RING_COLOR_LABELS,
+  type Cohort,
+  type Course,
+  type CourseActivity,
+  type MoodleUser,
+  type RingSectionSplit,
+  type Widget,
+} from '@moodify/shared';
+import { api, cn, errorMessage } from '@/lib/api';
 import { Button, ErrorNote, Input, Label, Select, Spinner, Switch } from '@/ui';
 
 type Config = Record<string, unknown>;
@@ -24,6 +33,8 @@ export function WidgetConfigForm({
   const [courses, setCourses] = useState<Course[]>([]);
   const [users, setUsers] = useState<MoodleUser[]>([]);
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
+  /** Course id -> its section names in Moodle's order. Loaded only for ticked courses. */
+  const [sections, setSections] = useState<Record<number, string[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -48,6 +59,31 @@ export function WidgetConfigForm({
   }, []);
 
   const set = (key: string, value: unknown) => setConfig((prev) => ({ ...prev, [key]: value }));
+
+  // Section names for whichever courses are currently ticked in the rings widget. Fetched
+  // here rather than shipped with /api/courses because only this one widget needs them,
+  // and only for the handful of courses actually in the ring.
+  const ringCourseIdsRaw = Array.isArray(config.courseIds) ? (config.courseIds as number[]) : [];
+  const ringCourseKey = ringCourseIdsRaw.join(',');
+  useEffect(() => {
+    if (widget.type !== 'completion_rings' || ringCourseKey === '') return;
+    void (async () => {
+      const wanted = ringCourseKey.split(',').map(Number);
+      const loaded = await Promise.all(
+        wanted.map(async (courseId) => {
+          const activities = await api.get<CourseActivity[]>(
+            `/api/courses/${courseId}/activities`,
+          );
+          // Already ordered by section_order, so first-seen order is Moodle's own.
+          return [courseId, [...new Set(activities.map((a) => a.section))]] as [number, string[]];
+        }),
+      );
+      setSections(Object.fromEntries(loaded));
+    })().catch(() => {
+      // A failed section list only costs the split picker; the rest of the form works.
+      setSections({});
+    });
+  }, [widget.type, ringCourseKey]);
 
   const save = async () => {
     setBusy(true);
@@ -255,6 +291,189 @@ export function WidgetConfigForm({
               </label>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+
+  const ringSplits: Record<string, RingSectionSplit[]> =
+    typeof config.splits === 'object' && config.splits !== null
+      ? (config.splits as Record<string, RingSectionSplit[]>)
+      : {};
+  const splitOf = (courseId: number) => ringSplits[String(courseId)] ?? [];
+  const setSplit = (courseId: number, next: RingSectionSplit[]) => {
+    const copy = { ...ringSplits };
+    // Drop the key rather than storing an empty array: "no entry" is what the backend
+    // reads as "keep this course whole", and two ways of saying it is one too many.
+    if (next.length === 0) delete copy[String(courseId)];
+    else copy[String(courseId)] = next;
+    set('splits', copy);
+  };
+
+  /** Per-course section split: tick the sections that deserve a bar of their own. */
+  const ringSplitPicker = () => (
+    <div>
+      <Label>Split courses into sections</Label>
+      <p className="mb-2 text-xs text-muted">
+        A course you leave alone is one bar for the whole course. Tick sections instead and
+        that course becomes one bar per ticked section, each with its own completion and its
+        own tasks — sections you do not tick simply do not appear. Only courses ticked above
+        can be split.
+      </p>
+      {ringCourseIds.length === 0 ? (
+        <p className="text-xs text-muted">Tick some courses above first.</p>
+      ) : (
+        <div className="space-y-2">
+          {ringCourseIds.map((courseId) => {
+            const course = courses.find((c) => c.id === courseId);
+            const available = sections[courseId];
+            const chosen = splitOf(courseId);
+            return (
+              <div key={courseId} className="rounded-xl border border-edge p-2">
+                <p className="mb-1 truncate text-sm font-medium">
+                  {course?.fullname ?? `Course ${courseId}`}
+                </p>
+                {available === undefined ? (
+                  <p className="text-xs text-muted">Loading sections…</p>
+                ) : available.length === 0 ? (
+                  <p className="text-xs text-muted">
+                    No completion-tracked activities synced for this course yet.
+                  </p>
+                ) : (
+                  <div className="max-h-40 space-y-1 overflow-y-auto">
+                    {available.map((section) => {
+                      const picked = chosen.find((entry) => entry.section === section);
+                      return (
+                        <div key={section} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            className="accent-accent"
+                            checked={picked !== undefined}
+                            onChange={() =>
+                              setSplit(
+                                courseId,
+                                picked === undefined
+                                  ? [...chosen, { section, label: '' }]
+                                  : chosen.filter((entry) => entry.section !== section),
+                              )
+                            }
+                          />
+                          <span className="min-w-0 flex-1 truncate" title={section}>
+                            {section}
+                          </span>
+                          {picked !== undefined ? (
+                            <Input
+                              className="w-32 py-1 text-xs"
+                              value={picked.label}
+                              maxLength={40}
+                              placeholder={section}
+                              aria-label={`Legend text for ${section}`}
+                              onChange={(e) =>
+                                setSplit(
+                                  courseId,
+                                  chosen.map((entry) =>
+                                    entry.section === section
+                                      ? { ...entry, label: e.target.value }
+                                      : entry,
+                                  ),
+                                )
+                              }
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  /**
+   * The segments this config will produce, in the order the ring draws them — the same
+   * rule the backend applies, so the colour keys here are the ones it will look up.
+   */
+  const ringSegments = ringCourseIds.flatMap((courseId) => {
+    const course = courses.find((c) => c.id === courseId);
+    const name = course?.fullname ?? `Course ${courseId}`;
+    const chosen = splitOf(courseId);
+    if (chosen.length === 0) return [{ key: String(courseId), label: name }];
+    return chosen.map((entry) => ({
+      key: `${courseId}:${entry.section}`,
+      label: `${name} — ${entry.label === '' ? entry.section : entry.label}`,
+    }));
+  });
+
+  const ringColors: Record<string, string> =
+    typeof config.colors === 'object' && config.colors !== null
+      ? (config.colors as Record<string, string>)
+      : {};
+
+  const ringColorPicker = () => (
+    <div>
+      <Label htmlFor={id('colorMode')}>Segment colours</Label>
+      <Select
+        id={id('colorMode')}
+        value={String(config.colorMode ?? 'auto')}
+        onChange={(e) => set('colorMode', e.target.value)}
+      >
+        <option value="auto">Automatic — spaced as far apart as the count allows</option>
+        <option value="manual">Pick a colour per segment</option>
+      </Select>
+      {config.colorMode !== 'manual' ? null : ringSegments.length === 0 ? (
+        <p className="mt-2 text-xs text-muted">
+          Tick some courses above to choose their colours. With no course ticked the ring
+          shows every visible course and colours them automatically.
+        </p>
+      ) : (
+        <div className="mt-2 space-y-2">
+          <p className="text-xs text-muted">
+            Anything you leave unset keeps its automatic colour. Red is not on the list — in
+            a ring it means an overdue task and nothing else.
+          </p>
+          {ringSegments.map((segment) => (
+            <div key={segment.key}>
+              <p className="mb-1 truncate text-xs text-muted" title={segment.label}>
+                {segment.label}
+              </p>
+              <div className="flex flex-wrap items-center gap-1">
+                {RING_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    title={RING_COLOR_LABELS[color]}
+                    aria-label={`${RING_COLOR_LABELS[color]} for ${segment.label}`}
+                    aria-pressed={ringColors[segment.key] === color}
+                    onClick={() => set('colors', { ...ringColors, [segment.key]: color })}
+                    className={cn(
+                      'h-6 w-6 rounded-full border-2 transition',
+                      ringColors[segment.key] === color
+                        ? 'border-ink scale-110'
+                        : 'border-transparent hover:scale-110',
+                    )}
+                    style={{ background: color }}
+                  />
+                ))}
+                {ringColors[segment.key] === undefined ? null : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = { ...ringColors };
+                      delete next[segment.key];
+                      set('colors', next);
+                    }}
+                    className="ml-1 text-xs text-accent underline underline-offset-2"
+                  >
+                    Auto
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -632,17 +851,24 @@ export function WidgetConfigForm({
       {widget.type === 'completion_rings' ? (
         <>
           {ringCoursePicker()}
+          {ringSplitPicker()}
+          {ringColorPicker()}
           {ringCohortPicker()}
           {sortPicker(
             [
               { value: 'name', label: 'Name' },
               { value: 'percent', label: 'Overall completion' },
               { value: 'overdue', label: 'Overdue activities' },
-              { value: 'courses', label: 'Number of courses' },
+              { value: 'courses', label: 'Number of segments' },
             ],
             'name',
             'asc',
           )}
+          <p className="-mt-1 text-xs text-muted">
+            People who tie on the chosen key are ordered by overall completion, highest
+            first, and then by name — so sorting by segment count descending puts the
+            busiest people first and, within them, whoever is furthest along.
+          </p>
           <div>
             <Label htmlFor={id('ringSize')}>Ring size</Label>
             <Select

@@ -234,6 +234,12 @@ alike.
 course's completion in that course's colour — finish everything and the ring is a full circle of
 colour.
 
+Tiles are ordered by the key you choose, then by **overall completion, highest first**, then by
+name. The groups the other keys produce are wide — "four segments" or "nothing overdue" can be most
+of a class — and inside such a group the only thing anyone reads for is who is furthest along.
+Completion stays highest-first whichever direction the primary key points: flipping it too would
+order the groups descending while their contents ascend, which reads as a bug rather than a setting.
+
 A ring only shows courses its owner is **actually enrolled in**. Select four year-group courses and
 a first-year student gets a single full ring for theirs, not three empty segments for courses they
 cannot even open — empty reads as "has done nothing", the opposite of the truth. Colour therefore
@@ -242,13 +248,31 @@ in one person's ring, so the legend holds for everybody. Selecting no courses at
 visible one, matching the `scope: all` default the other widgets use; with the per-person filter on
 top, that is already a sensible board.
 
-**Red is not a completion colour in a ring.** Segment colours are generated from the number of
-courses on screen rather than taken from a list: hues spaced evenly across a 30°–330° band, so four
-courses land 75° apart and eight land 37° apart, and nothing ever falls in the red the overdue state
-owns. A fixed list has to wrap, and any list long enough not to wrap ends up holding four things
-that all read as "blue" — sky, cyan, indigo and teal are distinct on a swatch and identical in a
-12px arc across the room. If a course were simply coloured red, a class where everyone is on track
-would look identical to a class where everyone has failed that course.
+**A course can be split into sections.** Tick a course in the widget's list and its sections appear;
+tick the sections that deserve their own bar and that course stops being one segment and becomes one
+per section, each with its own completion, its own tasks and its own colour. Sections you do not
+tick do not appear at all — splitting a course is a statement about what is worth watching, and
+carrying the rest along as a leftover segment would undo the point. Each section takes a legend
+label of your own; leave it blank and Moodle's section name is used. Section completion is counted
+from the activities in that section (`course_activities` × `activity_completion`), which is only
+rewritten on a **full** discovery — so a section bar can lag the whole-course bar beside it by up to
+one full-sync interval.
+
+**Red is not a completion colour in a ring.** Segment colours are automatic by default: hues spaced
+evenly across a 30°–330° band sized to however many segments are on screen, so four land 75° apart
+and eight land 37° apart, and nothing ever falls in the red the overdue state owns. A fixed list has
+to wrap, and any list long enough not to wrap ends up holding four things that all read as "blue" —
+sky, cyan, indigo and teal are distinct on a swatch and identical in a 12px arc across the room. If
+a course were simply coloured red, a class where everyone is on track would look identical to a
+class where everyone has failed that course.
+
+Switch the widget to **manual colours** to assign each segment one of eleven curated values (the
+first is the same light blue the progress bars use). It is a fixed set rather than a free picker for
+the same reason: a picker would let the overdue red be chosen and quietly break the only colour in
+the widget that is a judgement rather than a label. Anything left unset keeps its automatic hue, so
+a half-finished palette looks unfinished rather than broken. Colours are stored against a segment
+key — `courseId`, or `courseId:section` for a split — so a segment keeps its colour when its
+neighbours change.
 
 **Rings fill their column.** The SVG carries a viewBox and no fixed pixel size, and the grid uses
 `auto-fit`, so empty tracks collapse and widening the widget grows the rings instead of the gaps.

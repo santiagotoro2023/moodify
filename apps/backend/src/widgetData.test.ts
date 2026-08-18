@@ -13,7 +13,7 @@ import type {
 } from '@moodify/shared';
 import { deadlineDueAt, deadlineNextDueAt, nthWeekdayOf } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
-import { foldDeadlines, foldEvents, targetPercent } from './widgetData.ts';
+import { foldDeadlines, foldEvents, ringComparator, targetPercent } from './widgetData.ts';
 
 /**
  * Pure unit tests for the public-route anonymisation rules. The SQL side of
@@ -394,11 +394,11 @@ test('foldDeadlines counts due and overdue activities per course and user', () =
   const facts = foldDeadlines(
     [
       // Past its date and not done → overdue.
-      { courseId: 5, userId: 7, cmid: 1, name: 'Activity 1', rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: false },
+      { segment: '5', userId: 7, cmid: 1, name: 'Activity 1', rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: false },
       // Past its date but done → due, not overdue.
-      { courseId: 5, userId: 7, cmid: 2, name: 'Activity 2', rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: true },
+      { segment: '5', userId: 7, cmid: 2, name: 'Activity 2', rule: SEPTEMBER_FIRST_MONDAY, createdAt: created, completed: true },
       // Written down in January, first December still ahead → a deadline, but not due.
-      { courseId: 5, userId: 7, cmid: 3, name: 'Activity 3', rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
+      { segment: '5', userId: 7, cmid: 3, name: 'Activity 3', rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
     ],
     day('2026-10-01'),
   );
@@ -411,12 +411,27 @@ test('foldDeadlines counts due and overdue activities per course and user', () =
   });
 });
 
+test('foldDeadlines keeps two sections of one course apart', () => {
+  // The rings widget hands in `courseId:section` when a course is split. Two activities
+  // in the same course must then land in different buckets, not be summed into one.
+  const facts = foldDeadlines(
+    [
+      { segment: '5:Theorie', userId: 7, cmid: 1, name: 'ISO/OSI', rule: SEPTEMBER_FIRST_MONDAY, createdAt: day('2025-01-01'), completed: false },
+      { segment: '5:Praxis', userId: 7, cmid: 2, name: 'Patchen', rule: SEPTEMBER_FIRST_MONDAY, createdAt: day('2025-01-01'), completed: true },
+    ],
+    day('2026-10-01'),
+  );
+  assert.equal(facts.get('5:Theorie:7')?.overdue, 1);
+  assert.equal(facts.get('5:Praxis:7')?.overdue, 0);
+  assert.equal(facts.get('5:7'), undefined);
+});
+
 test('foldDeadlines lets the strictest cohort win when two claim one activity', () => {
   const rows = [
     // Same activity via a cohort whose deadline is not in force yet...
-    { courseId: 5, userId: 7, cmid: 1, name: 'Activity 1', rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
+    { segment: '5', userId: 7, cmid: 1, name: 'Activity 1', rule: DECEMBER_FIRST_MONDAY, createdAt: day('2026-01-15'), completed: false },
     // ...and via one whose deadline has passed. Two groups must not buy an extension.
-    { courseId: 5, userId: 7, cmid: 1, name: 'Activity 1', rule: SEPTEMBER_FIRST_MONDAY, createdAt: day('2025-01-01'), completed: false },
+    { segment: '5', userId: 7, cmid: 1, name: 'Activity 1', rule: SEPTEMBER_FIRST_MONDAY, createdAt: day('2025-01-01'), completed: false },
   ];
   const expected = { total: 1, due: 1, overdue: 1, earlyDone: 0, overdueNames: ['Activity 1'] };
   assert.deepEqual(foldDeadlines(rows, day('2026-10-01')).get('5:7'), expected);
@@ -427,12 +442,20 @@ test('foldDeadlines lets the strictest cohort win when two claim one activity', 
 test('completion_rings anonymises names and strips the profile picture', () => {
   const data: CompletionRingsData = {
     type: 'completion_rings',
-    courses: [course],
+    legend: [{ key: '1', label: course.shortname, title: course.fullname }],
     entries: [
       {
         user: { ...user(7, 'Zoe'), avatarUrl: '/api/user-image/7' },
         segments: [
-          { course, percent: 50, targetPercent: 75, overdue: 1, overdueActivities: ['ISO/OSI'] },
+          {
+            key: '1',
+            label: course.shortname,
+            title: course.fullname,
+            percent: 50,
+            targetPercent: 75,
+            overdue: 1,
+            overdueActivities: ['ISO/OSI'],
+          },
         ],
         overdue: 1,
         earlyDone: 0,
@@ -467,4 +490,45 @@ test('the target mark sits ahead of the fill by exactly the overdue work', () =>
   assert.equal(targetPercent({ ...facts, overdue: 0 }, 12, 40), null);
   // It can never point past a full ring.
   assert.equal(targetPercent(facts, 39, 40), 100);
+});
+
+test('ring tiles sort by the chosen key, then by completion, then by name', () => {
+  const tile = (name: string, courses: number, percent: number | null, overdue = 0) => ({
+    user: user(name.charCodeAt(0), name),
+    segments: Array.from({ length: courses }, (_, i) => ({
+      key: `${i}`,
+      label: `C${i}`,
+      title: `Course ${i}`,
+      percent,
+      targetPercent: null,
+      overdue: 0,
+      overdueActivities: [],
+    })),
+    overdue,
+    earlyDone: 0,
+    percent,
+    badges: [],
+  });
+
+  // Most courses first; inside each group the furthest along comes first.
+  const people = [tile('Ana', 2, 90), tile('Bo', 4, 30), tile('Cy', 4, 80), tile('Di', 2, 10)];
+  assert.deepEqual(
+    [...people].sort(ringComparator('courses', 'desc')).map((e) => e.user.fullname),
+    ['Cy', 'Bo', 'Ana', 'Di'],
+  );
+  // Fewest courses first, still highest completion first within the group.
+  assert.deepEqual(
+    [...people].sort(ringComparator('courses', 'asc')).map((e) => e.user.fullname),
+    ['Ana', 'Di', 'Cy', 'Bo'],
+  );
+
+  // Untracked people sort last whichever way completion itself is pointed.
+  const untracked = [tile('Ana', 1, null), tile('Bo', 1, 50)];
+  for (const dir of ['asc', 'desc'] as const) {
+    assert.equal(
+      [...untracked].sort(ringComparator('percent', dir)).at(-1)?.user.fullname,
+      'Ana',
+      `untracked last when sorting ${dir}`,
+    );
+  }
 });

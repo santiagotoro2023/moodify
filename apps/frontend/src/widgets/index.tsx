@@ -26,7 +26,14 @@ import {
   Trophy,
   User,
 } from 'lucide-react';
-import type { BadgeSize, ChartMarker, Density, RingMarker, RingSize } from '@moodify/shared';
+import type {
+  BadgeSize,
+  ChartMarker,
+  Density,
+  RingLegendItem,
+  RingMarker,
+  RingSize,
+} from '@moodify/shared';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, EmptyState, ErrorNote, Spinner } from '@/ui';
 
@@ -229,6 +236,26 @@ function ringColorAt(index: number, total: number): string {
   const step = RING_HUE_SPAN / Math.min(Math.max(total, 1), RING_MAX_HUES);
   const hue = (RING_HUE_START + index * step) % 360;
   return `hsl(${hue.toFixed(1)} 78% ${index % 2 === 0 ? 62 : 72}%)`;
+}
+
+/**
+ * The colour of each segment, by key.
+ *
+ * Manual mode falls back to the generated hue for anything left unset rather than to a
+ * placeholder: picking a colour for one segment out of six is a normal half-finished
+ * state, and it should look unfinished, not broken.
+ */
+function ringColorMap(
+  legend: RingLegendItem[],
+  options: Pick<RingOptions, 'colorMode' | 'colors'>,
+): Map<string, string> {
+  return new Map(
+    legend.map((item, index) => [
+      item.key,
+      (options.colorMode === 'manual' ? options.colors[item.key] : undefined) ??
+        ringColorAt(index, legend.length),
+    ]),
+  );
 }
 
 /** Diameter of the avatar marker, in px. Same three steps as the badge icons. */
@@ -919,6 +946,9 @@ const RING_PX: Record<RingSize, number> = { small: 96, medium: 128, large: 172 }
 
 interface RingOptions {
   ringSize: RingSize;
+  colorMode: 'auto' | 'manual';
+  /** Segment key -> hex. Only read in manual mode; missing keys fall back to the hue. */
+  colors: Record<string, string>;
   marker: RingMarker;
   showTarget: boolean;
   showLegend: boolean;
@@ -933,6 +963,11 @@ function ringOptionsOf(config: unknown): RingOptions {
   const badge = raw.badgeSize;
   return {
     ringSize: (size === 'small' || size === 'large' ? size : 'medium') as RingSize,
+    colorMode: raw.colorMode === 'manual' ? 'manual' : 'auto',
+    colors:
+      typeof raw.colors === 'object' && raw.colors !== null
+        ? (raw.colors as Record<string, string>)
+        : {},
     marker: (marker === 'avatar' || marker === 'both' ? marker : 'name') as RingMarker,
     showTarget: raw.showTarget !== false,
     showLegend: raw.showLegend !== false,
@@ -989,7 +1024,7 @@ function SegmentRows({
   rows,
 }: {
   entry: CompletionRingsEntry;
-  colorOf: (courseId: number) => string;
+  colorOf: (segmentKey: string) => string;
   rows: number;
 }) {
   const padding = Math.max(0, rows - entry.segments.length);
@@ -999,13 +1034,10 @@ function SegmentRows({
       style={{ gridTemplateColumns: 'auto minmax(0, 1fr) 2.4rem 1.3rem' }}
     >
       {entry.segments.map((segment) => (
-        <Fragment key={segment.course.id}>
-          <span
-            className="h-2 w-2 rounded-full"
-            style={{ background: colorOf(segment.course.id) }}
-          />
-          <dt className="truncate text-muted" title={segment.course.fullname}>
-            {segment.course.shortname}
+        <Fragment key={segment.key}>
+          <span className="h-2 w-2 rounded-full" style={{ background: colorOf(segment.key) }} />
+          <dt className="truncate text-muted" title={segment.title}>
+            {segment.label}
           </dt>
           <dd className="text-right tabular-nums">
             {segment.percent === null ? '—' : `${Math.round(segment.percent)}%`}
@@ -1040,8 +1072,8 @@ function PersonRing({
   rows,
 }: {
   entry: CompletionRingsEntry;
-  colorOf: (courseId: number) => string;
-  /** Course count of the busiest person, so every tile reserves the same room. */
+  colorOf: (segmentKey: string) => string;
+  /** Segment count of the busiest person, so every tile reserves the same room. */
   rows: number;
   options: RingOptions;
   instance: string;
@@ -1091,15 +1123,15 @@ function PersonRing({
           const from = index * slice + gap / 2;
           const to = (index + 1) * slice - gap / 2;
           const span = to - from;
-          // Colour comes from the course, not from where it lands in this person's ring:
+          // Colour comes from the segment, not from where it lands in this person's ring:
           // someone enrolled in only the third course must still get the third colour.
-          const color = segment.overdue > 0 ? OVERDUE_COLOR : colorOf(segment.course.id);
+          const color = segment.overdue > 0 ? OVERDUE_COLOR : colorOf(segment.key);
           const fraction = (segment.percent ?? 0) / 100;
           const targetAngle =
             segment.targetPercent === null ? null : from + span * (segment.targetPercent / 100);
 
           return (
-            <g key={segment.course.id}>
+            <g key={segment.key}>
               <path
                 d={arcPath(center, center, radius, from, to)}
                 fill="none"
@@ -1114,7 +1146,7 @@ function PersonRing({
                   strokeWidth={stroke}
                 >
                   <title>
-                    {`${segment.course.fullname}: ${Math.round(segment.percent ?? 0)}%`}
+                    {`${segment.title}: ${Math.round(segment.percent ?? 0)}%`}
                     {segment.targetPercent === null
                       ? ''
                       : ` (target ${Math.round(segment.targetPercent)}%)`}
@@ -1174,12 +1206,12 @@ function PersonRing({
             const y = center - ((entry.segments.length - 1) * centreLine) / 2 + index * centreLine;
             const blockW = centreFont * 3.4;
             return (
-              <g key={segment.course.id}>
+              <g key={segment.key}>
                 <circle
                   cx={center - blockW / 2 + centreFont * 0.3}
                   cy={y}
                   r={centreFont * 0.22}
-                  fill={segment.overdue > 0 ? OVERDUE_COLOR : colorOf(segment.course.id)}
+                  fill={segment.overdue > 0 ? OVERDUE_COLOR : colorOf(segment.key)}
                 />
                 <text
                   x={center - blockW / 2 + centreFont}
@@ -1189,7 +1221,7 @@ function PersonRing({
                   fontSize={centreFont}
                 >
                   {segment.percent === null ? '—' : `${Math.round(segment.percent)}%`}
-                  <title>{segment.course.fullname}</title>
+                  <title>{segment.title}</title>
                 </text>
               </g>
             );
@@ -1232,10 +1264,8 @@ function PersonRing({
 
 function CompletionRings({ data, config }: { data: CompletionRingsData; config: RingOptions }) {
   const instance = useId().replace(/:/g, '');
-  const colors = new Map(
-    data.courses.map((course, index) => [course.id, ringColorAt(index, data.courses.length)]),
-  );
-  const colorOf = (courseId: number) => colors.get(courseId) ?? '#38bdf8';
+  const colors = ringColorMap(data.legend, config);
+  const colorOf = (segmentKey: string) => colors.get(segmentKey) ?? '#38bdf8';
 
   if (data.entries.length === 0) {
     return (
@@ -1254,13 +1284,13 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
     <div className="space-y-3">
       {config.showLegend ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-          {data.courses.map((course) => (
-            <span key={course.id} className="flex items-center gap-1.5" title={course.fullname}>
+          {data.legend.map((item) => (
+            <span key={item.key} className="flex items-center gap-1.5" title={item.title}>
               <span
                 className="h-2 w-2 shrink-0 rounded-full"
-                style={{ background: colorOf(course.id) }}
+                style={{ background: colorOf(item.key) }}
               />
-              {course.shortname}
+              {item.label}
             </span>
           ))}
         </div>
@@ -1312,8 +1342,8 @@ export function autoTitle(widget: Widget, data: Payload | null): string {
       case 'progress_chart':
         return data.metric === 'badges' ? 'Badges over time' : 'Completion over time';
       case 'completion_rings':
-        return data.courses.length === 1 && data.courses[0]
-          ? `Progress — ${data.courses[0].fullname}`
+        return data.legend.length === 1 && data.legend[0]
+          ? `Progress — ${data.legend[0].title}`
           : 'Progress rings';
     }
   }

@@ -9,6 +9,7 @@ import {
   type Course,
   type DeadlineRule,
   type MoodleUser,
+  type RingLegendItem,
   type RingSegment,
   type WidgetConfig,
   type WidgetData,
@@ -195,6 +196,7 @@ type DeadlineRow = {
   moodle_user_id: number;
   cmid: number;
   name: string;
+  section: string;
   due_date: Date | null;
   month: number | null;
   weekday: number | null;
@@ -224,7 +226,11 @@ export interface DeadlineFacts {
  */
 export function foldDeadlines(
   rows: readonly {
-    courseId: number;
+    /**
+     * What the deadline counts towards: the course id for a whole-course segment, or
+     * `courseId:section` when the ring splits that course up. Opaque to the fold.
+     */
+    segment: string;
     userId: number;
     cmid: number;
     name: string;
@@ -239,12 +245,12 @@ export function foldDeadlines(
     { pair: string; name: string; due: Date | null; completed: boolean }
   >();
   for (const row of rows) {
-    const key = `${row.courseId}:${row.userId}:${row.cmid}`;
+    const key = `${row.segment}:${row.userId}:${row.cmid}`;
     const due = deadlineDueAt(row.rule, row.createdAt, now);
     const seen = perActivity.get(key);
     if (seen === undefined) {
       perActivity.set(key, {
-        pair: `${row.courseId}:${row.userId}`,
+        pair: `${row.segment}:${row.userId}`,
         name: row.name,
         due,
         completed: row.completed,
@@ -283,18 +289,26 @@ const NO_DEADLINES: DeadlineFacts = {
 };
 
 /**
- * Every deadline fact for the given courses (null = all), keyed `courseId:userId`.
+ * Every deadline fact for the given courses (null = all), keyed `segment:userId` — which
+ * is `courseId:userId` unless the caller says otherwise.
+ *
+ * `segmentOf` exists for the rings widget, where a course can be cut into one segment per
+ * section: an activity's deadline then has to count towards its own section rather than
+ * the course as a whole, and only the section knows which that is.
  *
  * ponytail: reads the whole join and folds in memory. At the documented scale (<50
  * users, <20 courses, a handful of deadlines) that is a few hundred rows; push the
  * aggregation into SQL if a deployment ever outgrows that.
  */
-async function loadDeadlineFacts(courseIds: number[] | null): Promise<Map<string, DeadlineFacts>> {
+async function loadDeadlineFacts(
+  courseIds: number[] | null,
+  segmentOf: (courseId: number, section: string) => string = (courseId) => String(courseId),
+): Promise<Map<string, DeadlineFacts>> {
   // Driven off enrollments, not cohort membership: a task is only somebody's problem if
   // they are actually in the course. A cohort — when the task names one — narrows that
   // further; a task with no cohort applies to everyone enrolled.
   const { rows } = await sql<DeadlineRow>(
-    `select d.moodle_course_id, e.moodle_user_id, d.cmid, ca.name,
+    `select d.moodle_course_id, e.moodle_user_id, d.cmid, ca.name, ca.section,
             d.due_date, d.month, d.weekday, d.nth, d.created_at,
             (ac.cmid is not null) as completed
        from deadlines d
@@ -315,7 +329,7 @@ async function loadDeadlineFacts(courseIds: number[] | null): Promise<Map<string
 
   return foldDeadlines(
     rows.map((row) => ({
-      courseId: row.moodle_course_id,
+      segment: segmentOf(row.moodle_course_id, row.section),
       userId: row.moodle_user_id,
       cmid: row.cmid,
       name: row.name,
@@ -1094,6 +1108,53 @@ async function progressChart(
 // completion_rings — one ring per person, one segment per course.
 // ---------------------------------------------------------------------------
 
+/**
+ * People with nothing tracked sort last, and stay last when the direction flips — kept
+ * apart from the completion comparison for exactly that reason: negating a comparator
+ * that had already folded the nulls in would send them to the top on an ascending sort.
+ * 0 when both are tracked, leaving the decision to the caller.
+ */
+function untrackedLast(a: CompletionRingsEntry, b: CompletionRingsEntry): number {
+  if (a.percent === null && b.percent === null) return 0;
+  if (a.percent === null) return 1;
+  if (b.percent === null) return -1;
+  return 0;
+}
+
+/** Completion, highest first. Only meaningful once untrackedLast has passed. */
+function byRingPercent(a: CompletionRingsEntry, b: CompletionRingsEntry): number {
+  return (b.percent ?? 0) - (a.percent ?? 0);
+}
+
+/**
+ * How the tiles are ordered: the chosen key first, then completion, then the name.
+ *
+ * Completion is the tie-break under every other key rather than the name, because the
+ * groups the other keys produce are wide — "four courses" or "no overdue tasks" can be
+ * most of a class — and inside such a group the only thing anyone reads for is who is
+ * furthest along. It stays highest-first regardless of sortDir: flipping it would order
+ * the groups descending while their contents ascend, which reads as a bug rather than a
+ * setting. The name is the last resort, so the order is total and a reload cannot
+ * reshuffle two people who match on everything.
+ */
+export function ringComparator(
+  sortBy: WidgetConfig['completion_rings']['sortBy'],
+  sortDir: 'asc' | 'desc',
+): (a: CompletionRingsEntry, b: CompletionRingsEntry) => number {
+  const dir = sortDir === 'desc' ? -1 : 1;
+  return (a, b) => {
+    const byName = a.user.fullname.localeCompare(b.user.fullname) || a.user.id - b.user.id;
+    if (sortBy === 'name') return dir * byName;
+    if (sortBy === 'percent') {
+      return untrackedLast(a, b) || -dir * byRingPercent(a, b) || byName;
+    }
+    const byCompletion = untrackedLast(a, b) || byRingPercent(a, b);
+    if (sortBy === 'overdue') return dir * (a.overdue - b.overdue) || byCompletion || byName;
+    // Segment count, i.e. how much of the ring this person's enrolments actually fill.
+    return dir * (a.segments.length - b.segments.length) || byCompletion || byName;
+  };
+}
+
 async function completionRings(
   config: WidgetConfig['completion_rings'],
   avatarBase: string,
@@ -1126,6 +1187,38 @@ async function completionRings(
   }
   const courseIds = courses.map((course) => course.id);
 
+  // A course either contributes one whole-course segment or one segment per selected
+  // section — never both, and never a leftover for the sections not picked.
+  const splits = new Map(
+    Object.entries(config.splits)
+      .map(([id, sections]) => [Number(id), sections] as const)
+      .filter(([id, sections]) => Number.isFinite(id) && sections.length > 0),
+  );
+  const plan: { courseId: number; section: string | null; item: RingLegendItem }[] = [];
+  for (const course of courses) {
+    const sections = splits.get(course.id);
+    if (sections === undefined) {
+      plan.push({
+        courseId: course.id,
+        section: null,
+        item: { key: `${course.id}`, label: course.shortname, title: course.fullname },
+      });
+      continue;
+    }
+    for (const split of sections) {
+      plan.push({
+        courseId: course.id,
+        section: split.section,
+        item: {
+          key: `${course.id}:${split.section}`,
+          label: split.label === '' ? split.section : split.label,
+          title: `${course.fullname} — ${split.section}`,
+        },
+      });
+    }
+  }
+  const legend = plan.map((entry) => entry.item);
+
   const { rows: userRows } = await sql<UserRow>(
     `select distinct u.moodle_user_id, u.fullname, u.email, u.avatar_image_path
        from enrollments e
@@ -1140,7 +1233,7 @@ async function completionRings(
       order by u.fullname asc, u.moodle_user_id asc`,
     [courseIds, config.includeStaff, config.excludeUserIds, config.cohortIds],
   );
-  if (userRows.length === 0) return { type: 'completion_rings', courses, entries: [] };
+  if (userRows.length === 0) return { type: 'completion_rings', legend, entries: [] };
   const userIds = userRows.map((row) => row.moodle_user_id);
 
   // Which of the selected courses each person is actually in. A ring must only show
@@ -1165,7 +1258,47 @@ async function completionRings(
     [courseIds, userIds],
   );
   const cells = new Map(cellRows.map((row) => [`${row.moodle_course_id}:${row.moodle_user_id}`, row]));
-  const deadlines = await loadDeadlineFacts(courseIds);
+
+  // Per-section counts, only for the courses that are actually split.
+  //
+  // ponytail: activity_completion is only rewritten on a full discovery, so a section bar
+  // lags the whole-course bar next to it by up to one full-sync interval. Move the write
+  // into refreshPair if that ever reads as a bug rather than a delay.
+  const splitCourseIds = [...new Set(plan.filter((e) => e.section !== null).map((e) => e.courseId))];
+  const sectionCells = new Map<string, { total: number; completed: number }>();
+  if (splitCourseIds.length > 0) {
+    const { rows } = await sql<{
+      moodle_course_id: number;
+      section: string;
+      moodle_user_id: number;
+      total: number;
+      completed: number;
+    }>(
+      // No studentFilter: userIds is already the filtered set, so the join is a plain
+      // membership test and needs no roles column.
+      `select ca.moodle_course_id, ca.section, e.moodle_user_id,
+              count(*)::int as total, count(ac.cmid)::int as completed
+         from course_activities ca
+         join enrollments e on e.moodle_course_id = ca.moodle_course_id
+         left join activity_completion ac
+           on ac.moodle_course_id = ca.moodle_course_id
+          and ac.cmid             = ca.cmid
+          and ac.moodle_user_id   = e.moodle_user_id
+        where ca.moodle_course_id = any($1::int[]) and e.moodle_user_id = any($2::int[])
+        group by ca.moodle_course_id, ca.section, e.moodle_user_id`,
+      [splitCourseIds, userIds],
+    );
+    for (const row of rows) {
+      sectionCells.set(`${row.moodle_course_id}:${row.section}:${row.moodle_user_id}`, row);
+    }
+  }
+
+  // A deadline counts towards the segment holding its activity, which for a split course
+  // means its own section. An activity in a section nobody selected yields a key no
+  // segment uses, so it is simply never read.
+  const deadlines = await loadDeadlineFacts(courseIds, (courseId, section) =>
+    splits.has(courseId) ? `${courseId}:${section}` : `${courseId}`,
+  );
 
   const badgesByUser = new Map<number, Badge[]>();
   if (config.showBadges) {
@@ -1187,20 +1320,29 @@ async function completionRings(
   }
 
   const entries: CompletionRingsEntry[] = userRows.map((row) => {
-    const segments: RingSegment[] = courses
-      .filter((course) => isEnrolled.has(`${course.id}:${row.moodle_user_id}`))
-      .map((course) => {
-        const key = `${course.id}:${row.moodle_user_id}`;
-        const cell = cells.get(key);
-        const facts = deadlines.get(key) ?? NO_DEADLINES;
+    const userId = row.moodle_user_id;
+    const segments: RingSegment[] = plan
+      .filter((entry) => isEnrolled.has(`${entry.courseId}:${userId}`))
+      .map(({ courseId, section, item }) => {
+        // A section counts its own activities; a whole course reuses the snapshot the
+        // poller already keeps, which is both fresher and the number every other widget
+        // shows for that course.
+        const cell = section === null ? cells.get(`${courseId}:${userId}`) : undefined;
+        const part =
+          section === null ? undefined : sectionCells.get(`${courseId}:${section}:${userId}`);
+        const total = cell?.activities_total ?? part?.total ?? 0;
+        const completed = cell?.activities_completed ?? part?.completed ?? 0;
+        const percent =
+          section === null
+            ? cell?.percent_complete ?? null
+            : total === 0
+              ? null
+              : Math.round((completed / total) * 10000) / 100;
+        const facts = deadlines.get(`${item.key}:${userId}`) ?? NO_DEADLINES;
         return {
-          course,
-          percent: cell?.percent_complete ?? null,
-          targetPercent: targetPercent(
-            facts,
-            cell?.activities_completed ?? 0,
-            cell?.activities_total ?? 0,
-          ),
+          ...item,
+          percent,
+          targetPercent: targetPercent(facts, completed, total),
           overdue: facts.overdue,
           overdueActivities: facts.overdueNames,
         };
@@ -1214,8 +1356,8 @@ async function completionRings(
       user: toUserWithAvatar(row, avatarBase),
       segments,
       overdue: segments.reduce((sum, segment) => sum + segment.overdue, 0),
-      earlyDone: courses.reduce(
-        (sum, course) => sum + (deadlines.get(`${course.id}:${row.moodle_user_id}`)?.earlyDone ?? 0),
+      earlyDone: segments.reduce(
+        (sum, segment) => sum + (deadlines.get(`${segment.key}:${userId}`)?.earlyDone ?? 0),
         0,
       ),
       // Unweighted mean of the tracked courses, matching every other widget: a
@@ -1224,27 +1366,13 @@ async function completionRings(
         tracked.length === 0
           ? null
           : Math.round((tracked.reduce((sum, value) => sum + value, 0) / tracked.length) * 100) / 100,
-      badges: badgesByUser.get(row.moodle_user_id) ?? [],
+      badges: badgesByUser.get(userId) ?? [],
     };
   });
 
-  const dir = config.sortDir === 'desc' ? -1 : 1;
-  entries.sort((a, b) => {
-    const byName = a.user.fullname.localeCompare(b.user.fullname) || a.user.id - b.user.id;
-    if (config.sortBy === 'name') return dir * byName;
-    if (config.sortBy === 'overdue') return dir * (a.overdue - b.overdue) || byName;
-    // Segment count, i.e. how many of the selected courses the person is enrolled in.
-    if (config.sortBy === 'courses') {
-      return dir * (a.segments.length - b.segments.length) || byName;
-    }
-    // Untracked people sort last in either direction, as they do everywhere else.
-    if (a.percent === null && b.percent === null) return byName;
-    if (a.percent === null) return 1;
-    if (b.percent === null) return -1;
-    return dir * (a.percent - b.percent) || byName;
-  });
+  entries.sort(ringComparator(config.sortBy, config.sortDir));
 
-  return { type: 'completion_rings', courses, entries };
+  return { type: 'completion_rings', legend, entries };
 }
 
 // ---------------------------------------------------------------------------

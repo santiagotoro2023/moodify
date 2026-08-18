@@ -153,6 +153,49 @@ export const progressChartConfig = z.object({
   // "make it readable from across the room".
 });
 
+/**
+ * The colours a segment may be painted when the widget is set to manual colours.
+ *
+ * A fixed, curated set rather than a free colour picker: every value here is legible as a
+ * thin arc on the dark surface, and none of them reads as the red that means overdue —
+ * a picker would let one be chosen and quietly break the only colour that is a judgement
+ * rather than a label. The first is the same light blue the progress bars use.
+ */
+export const RING_COLORS = [
+  '#38bdf8', '#2563eb', '#6366f1', '#a855f7', '#d946ef', '#2dd4bf',
+  '#10b981', '#84cc16', '#eab308', '#f97316', '#94a3b8',
+] as const;
+export type RingColor = (typeof RING_COLORS)[number];
+
+export const RING_COLOR_LABELS: Record<RingColor, string> = {
+  '#38bdf8': 'Sky',
+  '#2563eb': 'Blue',
+  '#6366f1': 'Indigo',
+  '#a855f7': 'Violet',
+  '#d946ef': 'Fuchsia',
+  '#2dd4bf': 'Teal',
+  '#10b981': 'Emerald',
+  '#84cc16': 'Lime',
+  '#eab308': 'Yellow',
+  '#f97316': 'Orange',
+  '#94a3b8': 'Slate',
+};
+
+/**
+ * One section of a course, drawn as its own segment instead of the course as a whole.
+ *
+ * Sections not listed here simply do not appear: splitting a course is a statement about
+ * what is worth watching, and carrying the rest along as a leftover segment would make
+ * the ring less readable, which is the opposite of the point.
+ */
+export const ringSectionSplit = z.object({
+  /** Moodle's own section name, as stored on course_activities. */
+  section: z.string().min(1).max(255),
+  /** Legend text. Empty falls back to the Moodle section name. */
+  label: z.string().max(40).default(''),
+});
+export type RingSectionSplit = z.infer<typeof ringSectionSplit>;
+
 /** Diameter of one person's ring. */
 export const RING_SIZES = ['small', 'medium', 'large'] as const;
 export type RingSize = (typeof RING_SIZES)[number];
@@ -182,6 +225,21 @@ export const completionRingsConfig = z.object({
   courseIds: z.array(courseId).max(12).default([]),
   /** Whose rings are drawn. Empty = every student enrolled in the selected courses. */
   cohortIds: z.array(z.number().int().positive()).max(20).default([]),
+  /**
+   * Course id (as a string key) -> the sections of that course to draw as their own
+   * segments. A course with no entry, or an empty one, stays a single whole-course
+   * segment. Section completion is counted from the activities in that section, so a
+   * course split into two sections gives two independently tracked bars.
+   */
+  splits: z.record(z.string(), z.array(ringSectionSplit).max(12)).default({}),
+  /**
+   * 'auto' spaces the hues evenly over however many segments are on screen; 'manual'
+   * takes each segment's colour from `colors`, falling back to the auto hue for any
+   * segment left unset, so nothing is ever drawn colourless.
+   */
+  colorMode: z.enum(['auto', 'manual']).default('auto'),
+  /** Segment key (`courseId`, or `courseId:section`) -> colour. Only read in 'manual'. */
+  colors: z.record(z.string(), z.enum(RING_COLORS)).default({}),
   sortBy: z.enum(['name', 'percent', 'overdue', 'courses']).default('name'),
   sortDir,
   ringSize: z.enum(RING_SIZES).default('medium'),
@@ -457,10 +515,25 @@ export interface ProgressChartData {
   series: ProgressSeries[];
 }
 
-/** One course's slice of a person's ring. */
-export interface RingSegment {
-  course: Course;
-  /** null = the course tracks no activities; the segment is drawn as an empty track. */
+/**
+ * What one slice of the ring stands for: a whole course, or one section of one.
+ *
+ * Identified by an opaque key rather than a course id because a split course produces
+ * several slices from the same course. The key is what colours are stored against, so a
+ * segment keeps its colour when its neighbours change.
+ */
+export interface RingLegendItem {
+  /** `courseId` for a whole course, `courseId:section` for a section. */
+  key: string;
+  /** Short text, for the legend and the per-segment rows. */
+  label: string;
+  /** Full text, for tooltips. */
+  title: string;
+}
+
+/** One segment of a person's ring. */
+export interface RingSegment extends RingLegendItem {
+  /** null = nothing here tracks completion; the segment is drawn as an empty track. */
   percent: number | null;
   /**
    * Where the fill would reach with nothing overdue — completed work plus the work whose
@@ -476,9 +549,9 @@ export interface RingSegment {
 export interface CompletionRingsEntry {
   user: MoodleUser;
   /**
-   * Only the selected courses this person is actually enrolled in, in the widget's
-   * configured order. Someone in one course out of four gets a single full ring rather
-   * than three empty segments for courses they cannot even open.
+   * Only the segments this person can actually reach, in the widget's configured order.
+   * Someone in one course out of four gets a single full ring rather than three empty
+   * segments for courses they cannot even open.
    */
   segments: RingSegment[];
   /** Total overdue across the segments, for sorting and the tile's status line. */
@@ -494,10 +567,10 @@ export interface CompletionRingsEntry {
 export interface CompletionRingsData {
   type: 'completion_rings';
   /**
-   * Every selected course, in configured order — the legend, and the source of each
-   * course's colour. An entry's segments are a subset of these.
+   * Every segment the widget can draw, in configured order — the legend, and the source
+   * of each segment's colour. An entry's segments are a subset of these.
    */
-  courses: Course[];
+  legend: RingLegendItem[];
   entries: CompletionRingsEntry[];
 }
 
