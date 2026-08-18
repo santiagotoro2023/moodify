@@ -13,6 +13,7 @@ import type {
 } from '@moodify/shared';
 import { deadlineDueAt, deadlineNextDueAt, nthWeekdayOf } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
+import { sectionMatches } from '@moodify/shared';
 import { foldDeadlines, foldEvents, ringComparator, targetPercent } from './widgetData.ts';
 
 /**
@@ -409,6 +410,20 @@ test('foldDeadlines counts due and overdue activities per course and user', () =
     earlyDone: 0,
     overdueNames: ['Activity 1'],
   });
+});
+
+test('a parent section gathers its subsections, and a sibling is left out', () => {
+  // The reported bug: "Grundkurse" holds nothing but subsections, so no activity is filed
+  // under that bare label and it was unselectable while all its children were listed.
+  assert.equal(sectionMatches('Grundkurse', 'Grundkurse'), true);
+  assert.equal(sectionMatches('Grundkurse › Woche 2', 'Grundkurse'), true);
+  assert.equal(sectionMatches('Grundkurse › Woche 2 › Teil A', 'Grundkurse'), true);
+  // A sibling that merely starts with the same letters is a different section.
+  assert.equal(sectionMatches('Grundkurse II', 'Grundkurse'), false);
+  assert.equal(sectionMatches('Lernumgebungen › Woche 2', 'Grundkurse'), false);
+  // Picking the child still narrows to the child.
+  assert.equal(sectionMatches('Grundkurse › Woche 2', 'Grundkurse › Woche 2'), true);
+  assert.equal(sectionMatches('Grundkurse › Woche 3', 'Grundkurse › Woche 2'), false);
 });
 
 test('foldDeadlines keeps two sections of one course apart', () => {

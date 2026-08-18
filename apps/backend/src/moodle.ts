@@ -11,7 +11,7 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { REQUIRED_WS_FUNCTIONS } from '@moodify/shared';
+import { REQUIRED_WS_FUNCTIONS, SECTION_SEPARATOR } from '@moodify/shared';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_BADGE_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -709,7 +709,8 @@ export async function getCourseContents(
       readString(section, 'component') === 'mod_subsection' && itemid !== null
         ? parentOf.get(itemid)
         : undefined;
-    const label = parent !== undefined && parent !== '' ? `${parent} › ${name}` : name;
+    const label =
+      parent !== undefined && parent !== '' ? `${parent}${SECTION_SEPARATOR}${name}` : name;
 
     for (const entry of readArray(section, 'modules')) {
       const cmid = readNumber(entry, 'id');

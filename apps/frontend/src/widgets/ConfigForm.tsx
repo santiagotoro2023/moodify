@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   RING_COLORS,
   RING_COLOR_LABELS,
+  SECTION_SEPARATOR,
   type Cohort,
   type Course,
   type CourseActivity,
@@ -10,6 +11,7 @@ import {
   type Widget,
 } from '@moodify/shared';
 import { api, cn, errorMessage } from '@/lib/api';
+import { ringColorAt } from './index';
 import { Button, ErrorNote, Input, Label, Select, Spinner, Switch } from '@/ui';
 
 type Config = Record<string, unknown>;
@@ -75,7 +77,20 @@ export function WidgetConfigForm({
             `/api/courses/${courseId}/activities`,
           );
           // Already ordered by section_order, so first-seen order is Moodle's own.
-          return [courseId, [...new Set(activities.map((a) => a.section))]] as [number, string[]];
+          //
+          // Every ancestor path is offered alongside the full labels. A section holding
+          // nothing but subsections owns no activities, so it appears in no label of its
+          // own — "Grundkurse" would be unselectable while all four of its subsections
+          // were listed. Picking a parent gathers everything under it.
+          const options: string[] = [];
+          for (const activity of activities) {
+            const parts = activity.section.split(SECTION_SEPARATOR);
+            for (let depth = 1; depth <= parts.length; depth += 1) {
+              const path = parts.slice(0, depth).join(SECTION_SEPARATOR);
+              if (path !== '' && !options.includes(path)) options.push(path);
+            }
+          }
+          return [courseId, options] as [number, string[]];
         }),
       );
       setSections(Object.fromEntries(loaded));
@@ -317,8 +332,10 @@ export function WidgetConfigForm({
       <p className="mb-2 text-xs text-muted">
         A course you leave alone is one bar for the whole course. Tick sections instead and
         that course becomes one bar per ticked section, each with its own completion and its
-        own tasks — sections you do not tick simply do not appear. Only courses ticked above
-        can be split.
+        own tasks — sections you do not tick simply do not appear. Ticking a parent section
+        gathers everything nested under it, so you can have one bar for all of it or one per
+        subsection. Only courses ticked above can be split, and a section with no
+        completion-tracked activities is not listed: there would be nothing to fill.
       </p>
       {ringCourseIds.length === 0 ? (
         <p className="text-xs text-muted">Tick some courses above first.</p>
@@ -343,8 +360,14 @@ export function WidgetConfigForm({
                   <div className="max-h-40 space-y-1 overflow-y-auto">
                     {available.map((section) => {
                       const picked = chosen.find((entry) => entry.section === section);
+                      const parts = section.split(SECTION_SEPARATOR);
+                      const leaf = parts[parts.length - 1] ?? section;
                       return (
-                        <div key={section} className="flex items-center gap-2 text-sm">
+                        <div
+                          key={section}
+                          className="flex items-center gap-2 text-sm"
+                          style={{ paddingLeft: `${(parts.length - 1) * 0.9}rem` }}
+                        >
                           <input
                             type="checkbox"
                             className="accent-accent"
@@ -359,14 +382,14 @@ export function WidgetConfigForm({
                             }
                           />
                           <span className="min-w-0 flex-1 truncate" title={section}>
-                            {section}
+                            {leaf}
                           </span>
                           {picked !== undefined ? (
                             <Input
                               className="w-32 py-1 text-xs"
                               value={picked.label}
                               maxLength={40}
-                              placeholder={section}
+                              placeholder={leaf}
                               aria-label={`Legend text for ${section}`}
                               onChange={(e) =>
                                 setSplit(
@@ -397,21 +420,29 @@ export function WidgetConfigForm({
    * The segments this config will produce, in the order the ring draws them — the same
    * rule the backend applies, so the colour keys here are the ones it will look up.
    */
-  const ringSegments = ringCourseIds.flatMap((courseId) => {
-    const course = courses.find((c) => c.id === courseId);
-    const name = course?.fullname ?? `Course ${courseId}`;
-    const chosen = splitOf(courseId);
-    if (chosen.length === 0) return [{ key: String(courseId), label: name }];
-    return chosen.map((entry) => ({
-      key: `${courseId}:${entry.section}`,
-      label: `${name} — ${entry.label === '' ? entry.section : entry.label}`,
-    }));
-  });
-
   const ringColors: Record<string, string> =
     typeof config.colors === 'object' && config.colors !== null
       ? (config.colors as Record<string, string>)
       : {};
+
+  const ringSegments = ringCourseIds
+    .flatMap((courseId) => {
+      const course = courses.find((c) => c.id === courseId);
+      const name = course?.fullname ?? `Course ${courseId}`;
+      const chosen = splitOf(courseId);
+      if (chosen.length === 0) return [{ key: String(courseId), label: name }];
+      return chosen.map((entry) => ({
+        key: `${courseId}:${entry.section}`,
+        label: `${name} — ${entry.label === '' ? entry.section : entry.label}`,
+      }));
+    })
+    // Same rule the widget applies, so the preview swatch is the colour actually drawn.
+    .map((segment, index, all) => ({
+      ...segment,
+      color:
+        (config.colorMode === 'manual' ? ringColors[segment.key] : undefined) ??
+        ringColorAt(index, all.length),
+    }));
 
   const ringColorPicker = () => (
     <div>
@@ -424,7 +455,7 @@ export function WidgetConfigForm({
         <option value="auto">Automatic — spaced as far apart as the count allows</option>
         <option value="manual">Pick a colour per segment</option>
       </Select>
-      {config.colorMode !== 'manual' ? null : ringSegments.length === 0 ? (
+      {ringSegments.length === 0 ? (
         <p className="mt-2 text-xs text-muted">
           Tick some courses above to choose their colours. With no course ticked the ring
           shows every visible course and colours them automatically.
@@ -432,8 +463,10 @@ export function WidgetConfigForm({
       ) : (
         <div className="mt-2 space-y-2">
           <p className="text-xs text-muted">
-            Anything you leave unset keeps its automatic colour. Red is not on the list — in
-            a ring it means an overdue task and nothing else.
+            {config.colorMode === 'manual'
+              ? 'Anything you leave unset keeps its automatic colour.'
+              : 'These are the colours the ring generates. Click one to override it.'}{' '}
+            Red is not on the list — in a ring it means an overdue task and nothing else.
           </p>
           {ringSegments.map((segment) => (
             <div key={segment.key}>
@@ -441,23 +474,41 @@ export function WidgetConfigForm({
                 {segment.label}
               </p>
               <div className="flex flex-wrap items-center gap-1">
-                {RING_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    title={RING_COLOR_LABELS[color]}
-                    aria-label={`${RING_COLOR_LABELS[color]} for ${segment.label}`}
-                    aria-pressed={ringColors[segment.key] === color}
-                    onClick={() => set('colors', { ...ringColors, [segment.key]: color })}
-                    className={cn(
-                      'h-6 w-6 rounded-full border-2 transition',
-                      ringColors[segment.key] === color
-                        ? 'border-ink scale-110'
-                        : 'border-transparent hover:scale-110',
-                    )}
-                    style={{ background: color }}
-                  />
-                ))}
+                {/* The colour the ring is drawing today, whichever mode is on: the swatch
+                    row doubles as a preview, so it is worth showing before you commit to
+                    overriding anything. */}
+                <span
+                  className="mr-1 h-6 w-6 shrink-0 rounded-full ring-1 ring-edge"
+                  title="Currently drawn"
+                  style={{ background: segment.color }}
+                />
+                {RING_COLORS.map((color) => {
+                  const picked = config.colorMode === 'manual' && ringColors[segment.key] === color;
+                  return (
+                    <button
+                      key={color}
+                      type="button"
+                      title={RING_COLOR_LABELS[color]}
+                      aria-label={`${RING_COLOR_LABELS[color]} for ${segment.label}`}
+                      aria-pressed={picked}
+                      // Also flips the mode: hiding the swatches behind the dropdown made
+                      // them impossible to find, and clicking a colour can only mean one
+                      // thing anyway.
+                      onClick={() =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          colorMode: 'manual',
+                          colors: { ...ringColors, [segment.key]: color },
+                        }))
+                      }
+                      className={cn(
+                        'h-6 w-6 rounded-full border-2 transition',
+                        picked ? 'border-ink scale-110' : 'border-transparent hover:scale-110',
+                      )}
+                      style={{ background: color }}
+                    />
+                  );
+                })}
                 {ringColors[segment.key] === undefined ? null : (
                   <button
                     type="button"

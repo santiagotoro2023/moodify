@@ -262,7 +262,18 @@ tick the sections that deserve their own bar and that course stops being one seg
 per section, each with its own completion, its own tasks and its own colour. Sections you do not
 tick do not appear at all — splitting a course is a statement about what is worth watching, and
 carrying the rest along as a leftover segment would undo the point. Each section takes a legend
-label of your own; leave it blank and Moodle's section name is used. Section completion is counted
+label of your own; leave it blank and Moodle's section name is used.
+
+**Parent sections are selectable, and gather what is under them.** Section labels are paths —
+`Grundkurse › Woche 2` — because Moodle 4.5 returns a subsection as its own top-level section and
+the parent is only recoverable at sync time. A section holding nothing but subsections therefore
+owns no activities, appears in no label of its own, and was unselectable while all four of its
+children were listed. The picker now offers every ancestor path as well, and a chosen section
+matches itself plus everything nested beneath it (`sectionMatches` in `packages/shared`) — so
+`Grundkurse` is one bar for all of it, or you tick its subsections for one bar each, or both, and an
+activity inside a subsection counts towards both bars because it genuinely belongs to both. The
+match is on the full path segment, so a sibling called `Grundkurse II` is never swept in. A section
+with no completion-tracked activities is not offered at all: there would be nothing to fill. Section completion is counted
 from the activities in that section (`course_activities` × `activity_completion`), which the poller
 rewrites on **every** poll — so a section bar is exactly as fresh as the whole-course bar beside it.
 Only course *structure* (a section gaining a new activity) waits for the 15-minute full discovery.
@@ -275,8 +286,12 @@ sky, cyan, indigo and teal are distinct on a swatch and identical in a 12px arc 
 a course were simply coloured red, a class where everyone is on track would look identical to a
 class where everyone has failed that course.
 
-Switch the widget to **manual colours** to assign each segment one of eleven curated values (the
-first is the same light blue the progress bars use). It is a fixed set rather than a free picker for
+Every segment's current colour is shown as a swatch in the widget settings whichever mode is on,
+with the eleven presets beside it — clicking one overrides that segment and switches the widget to
+**manual colours** in the same click. The mode dropdown is still there to switch back to automatic,
+but the presets are no longer hidden behind it, which made them impossible to find.
+
+The eleven are curated values (the first is the same light blue the progress bars use). It is a fixed set rather than a free picker for
 the same reason: a picker would let the overdue red be chosen and quietly break the only colour in
 the widget that is a judgement rather than a label. Anything left unset keeps its automatic hue, so
 a half-finished palette looks unfinished rather than broken. Colours are stored against a segment

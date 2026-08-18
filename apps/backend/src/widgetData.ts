@@ -2,6 +2,7 @@ import { ZodError } from 'zod';
 import {
   deadlineDueAt,
   parseWidgetConfig,
+  sectionMatches,
   type Badge,
   type ChartWindow,
   type CompletionEntry,
@@ -292,9 +293,12 @@ const NO_DEADLINES: DeadlineFacts = {
  * Every deadline fact for the given courses (null = all), keyed `segment:userId` — which
  * is `courseId:userId` unless the caller says otherwise.
  *
- * `segmentOf` exists for the rings widget, where a course can be cut into one segment per
+ * `segmentsOf` exists for the rings widget, where a course can be cut into one segment per
  * section: an activity's deadline then has to count towards its own section rather than
- * the course as a whole, and only the section knows which that is.
+ * the course as a whole, and only the section knows which that is. It returns a list
+ * because a parent section and one of its subsections can both be selected, in which case
+ * an activity inside the subsection genuinely belongs to both bars — and it can return
+ * nothing, because an activity in a section nobody picked belongs to no bar at all.
  *
  * ponytail: reads the whole join and folds in memory. At the documented scale (<50
  * users, <20 courses, a handful of deadlines) that is a few hundred rows; push the
@@ -302,7 +306,7 @@ const NO_DEADLINES: DeadlineFacts = {
  */
 async function loadDeadlineFacts(
   courseIds: number[] | null,
-  segmentOf: (courseId: number, section: string) => string = (courseId) => String(courseId),
+  segmentsOf: (courseId: number, section: string) => string[] = (courseId) => [String(courseId)],
 ): Promise<Map<string, DeadlineFacts>> {
   // Driven off enrollments, not cohort membership: a task is only somebody's problem if
   // they are actually in the course. A cohort — when the task names one — narrows that
@@ -328,12 +332,8 @@ async function loadDeadlineFacts(
   );
 
   return foldDeadlines(
-    rows.map((row) => ({
-      segment: segmentOf(row.moodle_course_id, row.section),
-      userId: row.moodle_user_id,
-      cmid: row.cmid,
-      name: row.name,
-      rule: {
+    rows.flatMap((row) => {
+      const rule = {
         date:
           row.due_date === null
             ? null
@@ -341,10 +341,17 @@ async function loadDeadlineFacts(
         month: row.month,
         weekday: row.weekday,
         nth: row.nth,
-      },
-      createdAt: row.created_at,
-      completed: row.completed,
-    })),
+      };
+      return segmentsOf(row.moodle_course_id, row.section).map((segment) => ({
+        segment,
+        userId: row.moodle_user_id,
+        cmid: row.cmid,
+        name: row.name,
+        rule,
+        createdAt: row.created_at,
+        completed: row.completed,
+      }));
+    }),
     new Date(),
   );
 }
@@ -1288,17 +1295,33 @@ async function completionRings(
         group by ca.moodle_course_id, ca.section, e.moodle_user_id`,
       [splitCourseIds, userIds],
     );
+    // Folded by *chosen* section, not by the section the activity is filed under: picking
+    // "Grundkurse" has to gather everything nested beneath it, which is the only way to
+    // select a section that holds nothing but subsections and therefore owns no activities
+    // of its own. A row lands in every chosen section it matches, so a parent and one of
+    // its children can both be drawn.
     for (const row of rows) {
-      sectionCells.set(`${row.moodle_course_id}:${row.section}:${row.moodle_user_id}`, row);
+      for (const split of splits.get(row.moodle_course_id) ?? []) {
+        if (!sectionMatches(row.section, split.section)) continue;
+        const key = `${row.moodle_course_id}:${split.section}:${row.moodle_user_id}`;
+        const seen = sectionCells.get(key) ?? { total: 0, completed: 0 };
+        seen.total += row.total;
+        seen.completed += row.completed;
+        sectionCells.set(key, seen);
+      }
     }
   }
 
   // A deadline counts towards the segment holding its activity, which for a split course
   // means its own section. An activity in a section nobody selected yields a key no
   // segment uses, so it is simply never read.
-  const deadlines = await loadDeadlineFacts(courseIds, (courseId, section) =>
-    splits.has(courseId) ? `${courseId}:${section}` : `${courseId}`,
-  );
+  const deadlines = await loadDeadlineFacts(courseIds, (courseId, section) => {
+    const chosen = splits.get(courseId);
+    if (chosen === undefined) return [`${courseId}`];
+    return chosen
+      .filter((split) => sectionMatches(section, split.section))
+      .map((split) => `${courseId}:${split.section}`);
+  });
 
   const badgesByUser = new Map<number, Badge[]>();
   if (config.showBadges) {

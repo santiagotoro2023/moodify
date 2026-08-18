@@ -182,6 +182,20 @@ export const RING_COLOR_LABELS: Record<RingColor, string> = {
 };
 
 /**
+ * What joins a parent section to a subsection in a stored section label.
+ *
+ * Moodle 4.5 returns a subsection as its own top-level section, so the parent is only
+ * recoverable at sync time; the label is composed once there and every later reader —
+ * the Tasks picker, the ring split matching — treats it as a path.
+ */
+export const SECTION_SEPARATOR = ' › ';
+
+/** Whether `section` is `chosen` itself or nested somewhere under it. */
+export function sectionMatches(section: string, chosen: string): boolean {
+  return section === chosen || section.startsWith(chosen + SECTION_SEPARATOR);
+}
+
+/**
  * One section of a course, drawn as its own segment instead of the course as a whole.
  *
  * Sections not listed here simply do not appear: splitting a course is a statement about
@@ -189,7 +203,12 @@ export const RING_COLOR_LABELS: Record<RingColor, string> = {
  * the ring less readable, which is the opposite of the point.
  */
 export const ringSectionSplit = z.object({
-  /** Moodle's own section name, as stored on course_activities. */
+  /**
+   * A section path: either a full label as stored on course_activities, or a parent
+   * section's name. A parent matches everything nested under it, which is the only way to
+   * pick a section that holds nothing but subsections — it owns no activities of its own,
+   * so it would otherwise be unselectable.
+   */
   section: z.string().min(1).max(255),
   /** Legend text. Empty falls back to the Moodle section name. */
   label: z.string().max(40).default(''),
@@ -337,7 +356,7 @@ export interface CourseActivity {
   cmid: number;
   name: string;
   modname: string;
-  /** Course section, already "Parent › Subsection" where Moodle nests them. */
+  /** Course section, already "Parent SECTION_SEPARATOR Subsection" where Moodle nests them. */
   section: string;
   /** Moodle's own ordering of that section within the course. */
   sectionOrder: number;

@@ -232,7 +232,7 @@ const RING_HUE_START = 30;
 const RING_HUE_SPAN = 300;
 const RING_MAX_HUES = 12;
 
-function ringColorAt(index: number, total: number): string {
+export function ringColorAt(index: number, total: number): string {
   const step = RING_HUE_SPAN / Math.min(Math.max(total, 1), RING_MAX_HUES);
   const hue = (RING_HUE_START + index * step) % 360;
   return `hsl(${hue.toFixed(1)} 78% ${index % 2 === 0 ? 62 : 72}%)`;
