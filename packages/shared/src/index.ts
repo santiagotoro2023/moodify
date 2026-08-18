@@ -210,7 +210,11 @@ export const ringSectionSplit = z.object({
    * so it would otherwise be unselectable.
    */
   section: z.string().min(1).max(255),
-  /** Legend text. Empty falls back to the Moodle section name. */
+  /**
+   * @deprecated Superseded by `completionRingsConfig.labels`, which names whole courses
+   * and sections through one mechanism. Still read so labels saved before that existed
+   * are not silently dropped; nothing writes it any more.
+   */
   label: z.string().max(40).default(''),
 });
 export type RingSectionSplit = z.infer<typeof ringSectionSplit>;
@@ -259,6 +263,14 @@ export const completionRingsConfig = z.object({
   colorMode: z.enum(['auto', 'manual']).default('auto'),
   /** Segment key (`courseId`, or `courseId:section`) -> colour. Only read in 'manual'. */
   colors: z.record(z.string(), z.enum(RING_COLORS)).default({}),
+  /**
+   * Segment key -> legend text, for whole courses and sections alike. Unset falls back to
+   * the course's shortname or the section's name in Moodle.
+   *
+   * Only the label changes: the tooltip keeps naming the real course and section, so a
+   * segment renamed to something short is still traceable back to what it actually is.
+   */
+  labels: z.record(z.string(), z.string().max(40)).default({}),
   sortBy: z.enum(['name', 'percent', 'overdue', 'courses']).default('name'),
   sortDir,
   ringSize: z.enum(RING_SIZES).default('medium'),

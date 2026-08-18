@@ -324,7 +324,8 @@ export function WidgetConfigForm({
         gathers everything nested under it, so you can have one bar for all of it or one per
         subsection. Only courses ticked above can be split. A section with nothing
         completion-tracked in it can be ticked too — its bar just stays empty until an
-        activity in it gets completion turned on in Moodle.
+        activity in it gets completion turned on in Moodle. Naming happens further down,
+        under Segments, where whole courses are named the same way.
       </p>
       {ringCourseIds.length === 0 ? (
         <p className="text-xs text-muted">Tick some courses above first.</p>
@@ -373,25 +374,6 @@ export function WidgetConfigForm({
                           <span className="min-w-0 flex-1 truncate" title={section}>
                             {leaf}
                           </span>
-                          {picked !== undefined ? (
-                            <Input
-                              className="w-32 py-1 text-xs"
-                              value={picked.label}
-                              maxLength={40}
-                              placeholder={leaf}
-                              aria-label={`Legend text for ${section}`}
-                              onChange={(e) =>
-                                setSplit(
-                                  courseId,
-                                  chosen.map((entry) =>
-                                    entry.section === section
-                                      ? { ...entry, label: e.target.value }
-                                      : entry,
-                                  ),
-                                )
-                              }
-                            />
-                          ) : null}
                         </div>
                       );
                     })}
@@ -414,15 +396,25 @@ export function WidgetConfigForm({
       ? (config.colors as Record<string, string>)
       : {};
 
+  const ringLabels: Record<string, string> =
+    typeof config.labels === 'object' && config.labels !== null
+      ? (config.labels as Record<string, string>)
+      : {};
+
   const ringSegments = ringCourseIds
     .flatMap((courseId) => {
       const course = courses.find((c) => c.id === courseId);
       const name = course?.fullname ?? `Course ${courseId}`;
       const chosen = splitOf(courseId);
-      if (chosen.length === 0) return [{ key: String(courseId), label: name }];
+      // `fallback` is what the legend shows with no override — the same choice the
+      // backend makes, so the placeholder is never a lie about what you will get.
+      if (chosen.length === 0) {
+        return [{ key: String(courseId), title: name, fallback: course?.shortname ?? name }];
+      }
       return chosen.map((entry) => ({
         key: `${courseId}:${entry.section}`,
-        label: `${name} — ${entry.label === '' ? entry.section : entry.label}`,
+        title: `${name} — ${entry.section}`,
+        fallback: entry.label === '' ? entry.section : entry.label,
       }));
     })
     // Same rule the widget applies, so the preview swatch is the colour actually drawn.
@@ -433,35 +425,57 @@ export function WidgetConfigForm({
         ringColorAt(index, all.length),
     }));
 
-  const ringColorPicker = () => (
+  /**
+   * One row per segment: what it is called, and what colour it is drawn in. Both are
+   * per-segment overrides of the same thing, so they belong on the same row — a course
+   * and a section of a course are named through one mechanism rather than two.
+   */
+  const ringSegmentPicker = () => (
     <div>
-      <Label htmlFor={id('colorMode')}>Segment colours</Label>
+      <Label htmlFor={id('colorMode')}>Segments</Label>
       <Select
         id={id('colorMode')}
         value={String(config.colorMode ?? 'auto')}
         onChange={(e) => set('colorMode', e.target.value)}
       >
-        <option value="auto">Automatic — spaced as far apart as the count allows</option>
+        <option value="auto">Automatic colours — spaced as far apart as the count allows</option>
         <option value="manual">Pick a colour per segment</option>
       </Select>
       {ringSegments.length === 0 ? (
         <p className="mt-2 text-xs text-muted">
-          Tick some courses above to choose their colours. With no course ticked the ring
-          shows every visible course and colours them automatically.
+          Tick some courses above to name and colour them. With no course ticked the ring
+          shows every visible course under its Moodle short name, coloured automatically.
         </p>
       ) : (
-        <div className="mt-2 space-y-2">
+        <div className="mt-2 space-y-3">
           <p className="text-xs text-muted">
+            Rename any segment for the legend — the tooltip still shows the real course and
+            section, so a short name stays traceable.{' '}
             {config.colorMode === 'manual'
-              ? 'Anything you leave unset keeps its automatic colour.'
-              : 'These are the colours the ring generates. Click one to override it.'}{' '}
+              ? 'Any colour you leave unset stays automatic.'
+              : 'The first swatch is the colour the ring generates; click another to override it.'}{' '}
             Red is not on the list — in a ring it means an overdue task and nothing else.
           </p>
           {ringSegments.map((segment) => (
             <div key={segment.key}>
-              <p className="mb-1 truncate text-xs text-muted" title={segment.label}>
-                {segment.label}
+              <p className="mb-1 truncate text-xs text-muted" title={segment.title}>
+                {segment.title}
               </p>
+              <Input
+                className="mb-1 py-1 text-xs"
+                value={ringLabels[segment.key] ?? ''}
+                maxLength={40}
+                placeholder={segment.fallback}
+                aria-label={`Legend text for ${segment.title}`}
+                onChange={(e) => {
+                  const next = { ...ringLabels };
+                  // Delete rather than store '': an empty override and no override mean
+                  // the same thing, and two ways to say it is one too many.
+                  if (e.target.value === '') delete next[segment.key];
+                  else next[segment.key] = e.target.value;
+                  set('labels', next);
+                }}
+              />
               <div className="flex flex-wrap items-center gap-1">
                 {/* The colour the ring is drawing today, whichever mode is on: the swatch
                     row doubles as a preview, so it is worth showing before you commit to
@@ -478,7 +492,7 @@ export function WidgetConfigForm({
                       key={color}
                       type="button"
                       title={RING_COLOR_LABELS[color]}
-                      aria-label={`${RING_COLOR_LABELS[color]} for ${segment.label}`}
+                      aria-label={`${RING_COLOR_LABELS[color]} for ${segment.title}`}
                       aria-pressed={picked}
                       // Also flips the mode: hiding the swatches behind the dropdown made
                       // them impossible to find, and clicking a colour can only mean one
@@ -892,7 +906,7 @@ export function WidgetConfigForm({
         <>
           {ringCoursePicker()}
           {ringSplitPicker()}
-          {ringColorPicker()}
+          {ringSegmentPicker()}
           {ringCohortPicker()}
           {sortPicker(
             [

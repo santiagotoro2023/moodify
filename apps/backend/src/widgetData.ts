@@ -1201,6 +1201,12 @@ async function completionRings(
       .map(([id, sections]) => [Number(id), sections] as const)
       .filter(([id, sections]) => Number.isFinite(id) && sections.length > 0),
   );
+  // A custom label only renames the legend; the title keeps naming the real course and
+  // section, so a segment renamed to something short stays traceable to what it is.
+  const named = (key: string, fallback: string) => {
+    const custom = config.labels[key];
+    return custom === undefined || custom === '' ? fallback : custom;
+  };
   const plan: { courseId: number; section: string | null; item: RingLegendItem }[] = [];
   for (const course of courses) {
     const sections = splits.get(course.id);
@@ -1208,17 +1214,24 @@ async function completionRings(
       plan.push({
         courseId: course.id,
         section: null,
-        item: { key: `${course.id}`, label: course.shortname, title: course.fullname },
+        item: {
+          key: `${course.id}`,
+          label: named(`${course.id}`, course.shortname),
+          title: course.fullname,
+        },
       });
       continue;
     }
     for (const split of sections) {
+      const key = `${course.id}:${split.section}`;
       plan.push({
         courseId: course.id,
         section: split.section,
         item: {
-          key: `${course.id}:${split.section}`,
-          label: split.label === '' ? split.section : split.label,
+          key,
+          // split.label is the pre-`labels` storage, read only so labels saved before the
+          // two merged still show up. Nothing writes it any more.
+          label: named(key, split.label === '' ? split.section : split.label),
           title: `${course.fullname} — ${split.section}`,
         },
       });

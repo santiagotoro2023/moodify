@@ -295,6 +295,15 @@ sky, cyan, indigo and teal are distinct on a swatch and identical in a 12px arc 
 a course were simply coloured red, a class where everyone is on track would look identical to a
 class where everyone has failed that course.
 
+**Every segment can be renamed.** Whole courses and sections alike take a legend label of your own
+under *Segments* in the widget settings; leave one blank and it falls back to the course's Moodle
+short name or the section's name. Only the legend changes — the tooltip still names the real course
+and section, so a segment shortened to "Grundlagen" is always traceable to what it actually is.
+Sections used to be named through a field of their own next to the tick box, which meant two
+mechanisms for one idea; they now share `config.labels`, keyed by segment key. The old per-section
+field is still *read* so labels saved before the merge are not silently dropped, and nothing writes
+it any more.
+
 Every segment's current colour is shown as a swatch in the widget settings whichever mode is on,
 with the eleven presets beside it — clicking one overrides that segment and switches the widget to
 **manual colours** in the same click. The mode dropdown is still there to switch back to automatic,
