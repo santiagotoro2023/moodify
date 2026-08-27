@@ -14,7 +14,7 @@ import type {
 import { deadlineDueAt, deadlineNextDueAt, nthWeekdayOf } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
 import { sectionMatches } from '@moodify/shared';
-import { foldDeadlines, foldEvents, ringComparator, targetPercent } from './widgetData.ts';
+import { foldDeadlines, foldEvents, orderBadges, ringComparator, targetPercent } from './widgetData.ts';
 
 /**
  * Pure unit tests for the public-route anonymisation rules. The SQL side of
@@ -110,7 +110,7 @@ test('one user keeps one label across every array in a single call', () => {
       { user: user(9, 'Nia'), badges: [], percent: null, overdue: 0 },
       {
         user: user(4, 'Ben'),
-        badges: [{ id: 1, name: 'Starter', description: null, courseId: null, imageUrl: null }],
+        badges: [{ id: 1, name: 'Starter', description: null, customDescription: null, courseId: null, imageUrl: null }],
         percent: null,
         overdue: 0,
       },
@@ -161,7 +161,7 @@ test('user_list relabels its single user and keeps badges and completion', () =>
   const data: UserListData = {
     type: 'user_list',
     user: user(42, 'Rafa'),
-    badges: [{ id: 3, name: 'Finisher', description: 'Done', courseId: 5, imageUrl: null }],
+    badges: [{ id: 3, name: 'Finisher', description: 'Done', customDescription: null, courseId: 5, imageUrl: null }],
     completion: [
       {
         course,
@@ -555,4 +555,33 @@ test('ring tiles sort by the chosen key, then by completion, then by name', () =
       `untracked last when sorting ${dir}`,
     );
   }
+});
+
+test('the badge order puts listed badges first and leaves the rest where they were', () => {
+  const badge = (id: number, name: string) => ({
+    id,
+    name,
+    description: null,
+    customDescription: null,
+    courseId: null,
+    imageUrl: null,
+  });
+  // Arrives A-Z from the query.
+  const held = [badge(1, 'Ada'), badge(2, 'Bea'), badge(3, 'Cal'), badge(4, 'Dot')];
+
+  // Only some of them are listed, and one listed badge (9) is held by nobody here.
+  assert.deepEqual(
+    orderBadges([...held], [3, 9, 1]).map((b) => b.name),
+    ['Cal', 'Ada', 'Bea', 'Dot'],
+  );
+
+  // Two unlisted badges must compare equal, not NaN — an Infinity - Infinity comparator
+  // leaves the order undefined and silently scrambles the tail.
+  assert.deepEqual(
+    orderBadges([...held], [4]).map((b) => b.name),
+    ['Dot', 'Ada', 'Bea', 'Cal'],
+  );
+
+  // No order set at all is the identity.
+  assert.deepEqual(orderBadges([...held], []).map((b) => b.name), ['Ada', 'Bea', 'Cal', 'Dot']);
 });

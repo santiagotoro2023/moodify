@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { DEFAULT_LOGO_HEIGHT, type Dashboard } from '@moodify/shared';
+import type { Dashboard } from '@moodify/shared';
 import { EyeOff } from 'lucide-react';
 import { api, assetUrl, errorMessage } from '@/lib/api';
 import { Button, Card, Spinner } from '@/ui';
 import { useBootstrap } from '@/App';
-import { DashboardGrid, StickyBackground } from '@/components/DashboardGrid';
+import { DashboardGrid, DashboardHeading, StickyBackground } from '@/components/DashboardGrid';
 
 interface PublicPayload {
   dashboard: Dashboard;
@@ -99,22 +99,17 @@ export default function PublicDashboard() {
     <div className="min-h-screen">
       <StickyBackground imageUrl={assetUrl(payload.dashboard.backgroundImagePath)} />
 
-      <header className="mx-auto flex flex-wrap items-center gap-3 px-5 py-5">
-        <img
-          src={brand?.logoUrl || '/brand/moodify-logo.svg'}
-          alt="Moodify"
-          className="w-auto shrink-0"
-          style={{ height: `${brand?.logoHeight ?? DEFAULT_LOGO_HEIGHT}px` }}
-          onError={(event) => {
-            event.currentTarget.src = '/brand/moodify-logo.svg';
-          }}
+      <header className="mx-auto px-5 pt-5">
+        <DashboardHeading
+          dashboard={payload.dashboard}
+          logoUrl={brand?.logoUrl}
+          logoHeight={brand?.logoHeight}
         />
-        <h1 className="text-lg font-semibold">{payload.dashboard.name}</h1>
         {payload.anonymized ? (
-          <span className="ml-auto flex items-center gap-1.5 text-xs text-muted">
+          <p className="-mt-3 mb-3 flex items-center justify-center gap-1.5 text-xs text-muted">
             <EyeOff className="h-3.5 w-3.5" />
             Names on this page are anonymised.
-          </span>
+          </p>
         ) : null}
       </header>
 

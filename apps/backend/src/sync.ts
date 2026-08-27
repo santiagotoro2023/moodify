@@ -363,7 +363,9 @@ export async function fetchAndStoreBadgeImage(
   badgeId: number,
   imageUrl: string,
 ): Promise<void> {
-  const { buffer, contentType } = await downloadImage(conn, imageUrl);
+  // preferLargest: the badge pop-up shows one full size, and Moodle's badge list reports
+  // whichever variant it feels like. See sizeVariants — the smaller ones still fall back.
+  const { buffer, contentType } = await downloadImage(conn, imageUrl, true);
   const filename = `${badgeId}.${extensionFor(contentType)}`;
   const directory = join(ASSETS_DIR, 'badges');
   await mkdir(directory, { recursive: true });

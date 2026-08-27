@@ -59,17 +59,11 @@ type BadgeRow = {
   moodle_course_id: number | null;
   name: string;
   description: string | null;
+  custom_description: string | null;
   cached_image_path: string | null;
 };
 
-type UserBadgeRow = {
-  moodle_user_id: number;
-  moodle_badge_id: number;
-  moodle_course_id: number | null;
-  name: string;
-  description: string | null;
-  cached_image_path: string | null;
-};
+type UserBadgeRow = BadgeRow & { moodle_user_id: number };
 
 type CellRow = {
   moodle_course_id: number;
@@ -165,11 +159,27 @@ function toUserWithAvatar(row: UserRow, base: string): MoodleUser {
  * Badge images are served by Moodify itself — Moodle's pluginfile.php needs the web
  * service token, so it can never be hotlinked from the frontend (§9.3).
  */
+/**
+ * Sorts `badges` in place into the widget's configured order.
+ *
+ * Anything not in `order` keeps the position it already had and follows the ordered
+ * badges, so a badge awarded for the first time after the order was saved appears at the
+ * end rather than disappearing.
+ */
+export function orderBadges(badges: Badge[], order: readonly number[]): Badge[] {
+  const rank = new Map(order.map((badgeId, index) => [badgeId, index]));
+  // MAX_SAFE_INTEGER rather than Infinity: two unlisted badges would subtract to NaN,
+  // which makes the comparator meaningless rather than merely equal.
+  const at = (badge: Badge) => rank.get(badge.id) ?? Number.MAX_SAFE_INTEGER;
+  return badges.sort((a, b) => at(a) - at(b));
+}
+
 function toBadge(row: BadgeRow): Badge {
   return {
     id: row.moodle_badge_id,
     name: row.name,
     description: row.description,
+    customDescription: row.custom_description,
     courseId: row.moodle_course_id,
     // Always the proxy, never the cached path directly: it redirects to the cached
     // file when there is one and downloads it on the spot when there is not, so a
@@ -562,7 +572,7 @@ async function badgeCards(
     if (user === null) return fail(USER_GONE);
 
     const { rows } = await sql<BadgeRow>(
-      `select b.moodle_badge_id, b.moodle_course_id, b.name, b.description, b.cached_image_path
+      `select b.moodle_badge_id, b.moodle_course_id, b.name, b.description, b.custom_description, b.cached_image_path
          from badge_issued bi
          join badges b on b.moodle_badge_id = bi.moodle_badge_id
         where bi.moodle_user_id = $1
@@ -615,7 +625,7 @@ async function badgeCards(
   // Badges attributed to this course, plus site-wide badges the user holds.
   const { rows: badgeRows } = await sql<UserBadgeRow>(
     `select bi.moodle_user_id, b.moodle_badge_id, b.moodle_course_id,
-            b.name, b.description, b.cached_image_path
+            b.name, b.description, b.custom_description, b.cached_image_path
        from badge_issued bi
        join badges b on b.moodle_badge_id = bi.moodle_badge_id
       where bi.moodle_user_id = any($1::int[])
@@ -755,7 +765,7 @@ async function userList(config: WidgetConfig['user_list']): Promise<WidgetData |
   }
 
   const { rows: badgeRows } = await sql<BadgeRow>(
-    `select b.moodle_badge_id, b.moodle_course_id, b.name, b.description, b.cached_image_path
+    `select b.moodle_badge_id, b.moodle_course_id, b.name, b.description, b.custom_description, b.cached_image_path
        from badge_issued bi
        join badges b on b.moodle_badge_id = bi.moodle_badge_id
       where bi.moodle_user_id = $1
@@ -1343,7 +1353,7 @@ async function completionRings(
   if (config.showBadges) {
     const { rows: badgeRows } = await sql<UserBadgeRow>(
       `select bi.moodle_user_id, b.moodle_badge_id, b.moodle_course_id,
-              b.name, b.description, b.cached_image_path
+              b.name, b.description, b.custom_description, b.cached_image_path
          from badge_issued bi
          join badges b on b.moodle_badge_id = bi.moodle_badge_id
         where bi.moodle_user_id = any($1::int[])
@@ -1355,6 +1365,9 @@ async function completionRings(
       const list = badgesByUser.get(row.moodle_user_id) ?? [];
       list.push(toBadge(row));
       badgesByUser.set(row.moodle_user_id, list);
+    }
+    if (config.badgeOrder.length > 0) {
+      for (const list of badgesByUser.values()) orderBadges(list, config.badgeOrder);
     }
   }
 

@@ -32,6 +32,8 @@ interface WidgetRow {
 interface DashboardRow {
   id: number;
   name: string;
+  title_left: string | null;
+  title_right: string | null;
   background_image_path: string | null;
   is_public: boolean;
   public_share_token: string | null;
@@ -66,6 +68,8 @@ export async function toDashboard(row: DashboardRow): Promise<Dashboard> {
   return {
     id: row.id,
     name: row.name,
+    titleLeft: row.title_left,
+    titleRight: row.title_right,
     backgroundImagePath: row.background_image_path,
     isPublic: row.is_public,
     publicShareToken: row.public_share_token,
@@ -74,8 +78,8 @@ export async function toDashboard(row: DashboardRow): Promise<Dashboard> {
   };
 }
 
-const DASHBOARD_COLUMNS = `id, name, background_image_path, is_public,
-                           public_share_token, anonymize_on_public`;
+const DASHBOARD_COLUMNS = `id, name, title_left, title_right, background_image_path,
+                           is_public, public_share_token, anonymize_on_public`;
 
 async function findDashboard(id: number): Promise<DashboardRow | null> {
   const { rows } = await sql<DashboardRow>(
@@ -128,6 +132,10 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
     const body = z
       .object({
         name: z.string().trim().min(1).max(100).optional(),
+        // Trimmed to '' means "no heading"; stored as NULL so the header has one
+        // emptiness to test rather than two.
+        titleLeft: z.string().trim().max(100).optional(),
+        titleRight: z.string().trim().max(100).optional(),
         isPublic: z.boolean().optional(),
         anonymizeOnPublic: z.boolean().optional(),
       })
@@ -145,6 +153,8 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
          is_public           = coalesce($3, is_public),
          anonymize_on_public = coalesce($4, anonymize_on_public),
          public_share_token  = case when $5 then $6 else public_share_token end,
+         title_left          = case when $7 then $8 else title_left end,
+         title_right         = case when $9 then $10 else title_right end,
          updated_at          = now()
        where id = $1
        returning ${DASHBOARD_COLUMNS}`,
@@ -155,6 +165,12 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
         body.anonymizeOnPublic ?? null,
         needsToken,
         needsToken ? randomToken(32) : null,
+        // Not coalesce: clearing a heading sends '', which has to reach the column as
+        // NULL rather than being read as "leave it alone".
+        body.titleLeft !== undefined,
+        body.titleLeft || null,
+        body.titleRight !== undefined,
+        body.titleRight || null,
       ],
     );
     const row = rows[0];

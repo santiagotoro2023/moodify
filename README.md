@@ -540,8 +540,8 @@ requires administrator approval for `Mail.Send`, the consent screen will say so 
 **Profile picture resolution.** `core_enrol_get_enrolled_users` always reports the `f1` variant,
 100px, which is visibly soft once a ring fills a wide column. The avatar download asks for `f3`
 first — the 250px retina variant Moodle has generated since 3.2 — and falls back through the other
-sizes where it does not exist. Badge icons keep asking for whatever the exporter handed back first,
-because there the given URL is the one known to work.
+sizes where it does not exist. Badge icons ask for `f3` first too, since the badge pop-up shows one
+at full size.
 
 **Profile pictures.** Synced from `core_enrol_get_enrolled_users` and cached locally, for the same
 reason badge icons are: `pluginfile.php` needs the web service token, so Moodle can never be
@@ -557,6 +557,37 @@ strips email entirely, along with the profile picture — a face identifies some
 as a name, so "Student 3" beside their photo anonymises nothing. Initials were rejected for the
 same reason: they are frequently re-identifying in a class of thirty. Substitution happens on the
 server — real names are never sent to a public client. The admin view always shows real names.
+
+**Widgets have no title bar.** No name, no icon, no rename — a dashboard is its content. The
+controls an admin needs (configure, collapse, remove) float over the top-right corner on hover and
+are absent entirely on a share link, and the whole widget is the drag handle now that there is no
+bar to grab. The trade is that a drag started inside a widget moves it rather than selecting text or
+pulling its scrollbar; the mouse wheel still scrolls. A widget's stored `title` is kept and still
+editable through the API — it is simply never painted.
+
+**Two headings, one centred logo.** A dashboard's `name` is the internal label on its tab. What a
+viewer sees above the grid is the logo on the page's centre line with `title_left` and `title_right`
+either side of it, on the admin page and the share link alike. It is a three-column grid with equal
+outer tracks rather than a flex row, so the logo stays centred whatever the two headings say.
+
+**Badges: descriptions, order and the pop-up.** Clicking a badge under a progress ring opens a
+pop-up with the badge at full size, its name, and the description written for it on the **Badges**
+page. That description is stored separately from Moodle's own, which every discovery run rewrites
+from the source; the pop-up prefers Moodify's and falls back to Moodle's. The Badges page can only
+list badges somebody has actually earned — Moodle exposes no endpoint for the badges a course merely
+*has* (see the badge-discovery note above) — so a badge appears there the day it is first awarded.
+The rings widget lays badges out in two fixed columns, in an order set in its settings; anything not
+in that order follows alphabetically, so a newly awarded badge shows up rather than disappearing.
+
+The pop-up is portalled to `<body>`. A react-grid-layout item positions itself with a CSS transform,
+and a transformed ancestor makes `position: fixed` resolve against *it* rather than the viewport —
+rendered in place, the overlay would be trapped inside the widget it came from and clipped by it.
+
+**The ring's schedule mark.** A short pink tick, half the segment's stroke width and centred in it,
+at 75% opacity. It used to be a full-width white rule, which read as a cut through the ring — a
+louder statement than "here is the plan". Segment colours accept any six-digit hex now, entered
+beside the curated swatches; the swatches remain the offer, not the limit. There is no legend above
+the wall of rings: every tile carries its own, in the middle of the ring or in the rows beneath it.
 
 **Public dashboards and personal data.** A public dashboard has no access control whatsoever once
 the link exists. Names, badges and completion figures are personal data; under the Swiss FADP,

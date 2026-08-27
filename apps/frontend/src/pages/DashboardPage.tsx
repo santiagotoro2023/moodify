@@ -4,12 +4,15 @@ import { WIDGET_TYPES, type Dashboard, type WidgetType } from '@moodify/shared';
 import { Copy, Plus, RefreshCw, Settings2, ShieldAlert, Trash2 } from 'lucide-react';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, Card, Dialog, ErrorNote, Input, Label, Spinner, Switch } from '@/ui';
-import { DashboardGrid, StickyBackground } from '@/components/DashboardGrid';
+import { DashboardGrid, DashboardHeading, StickyBackground } from '@/components/DashboardGrid';
 import { WIDGET_META } from '@/widgets';
+import { useBootstrap } from '@/App';
 
 export default function DashboardPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // Same heading the share link renders, so what is edited here is what visitors see.
+  const { state: brand } = useBootstrap();
   const [dashboards, setDashboards] = useState<Dashboard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -124,6 +127,12 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      <DashboardHeading
+        dashboard={current}
+        logoUrl={brand?.logoUrl}
+        logoHeight={brand?.logoHeight}
+      />
 
       <DashboardGrid dashboard={current} onChanged={() => void load()} />
 
@@ -275,11 +284,15 @@ function DashboardSettingsDialog({
       .catch(() => undefined);
   }, [open]);
   const [name, setName] = useState(dashboard.name);
+  const [titleLeft, setTitleLeft] = useState(dashboard.titleLeft ?? '');
+  const [titleRight, setTitleRight] = useState(dashboard.titleRight ?? '');
   const [error, setError] = useState<string | null>(null);
   const [confirmShare, setConfirmShare] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState('');
 
   useEffect(() => setName(dashboard.name), [dashboard.name]);
+  useEffect(() => setTitleLeft(dashboard.titleLeft ?? ''), [dashboard.titleLeft]);
+  useEffect(() => setTitleRight(dashboard.titleRight ?? ''), [dashboard.titleRight]);
 
   const patch = async (body: Record<string, unknown>) => {
     try {
@@ -305,6 +318,41 @@ function DashboardSettingsDialog({
             Save
           </Button>
         </div>
+        <p className="mt-1 text-xs text-muted">
+          Only used inside Moodify, to label the tab above. Visitors see the two headings
+          below instead.
+        </p>
+      </div>
+
+      <div>
+        <Label htmlFor="dash-title-left">Headings either side of the logo</Label>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Input
+            id="dash-title-left"
+            value={titleLeft}
+            maxLength={100}
+            placeholder="Left of the logo"
+            onChange={(e) => setTitleLeft(e.target.value)}
+          />
+          <Input
+            aria-label="Heading right of the logo"
+            value={titleRight}
+            maxLength={100}
+            placeholder="Right of the logo"
+            onChange={(e) => setTitleRight(e.target.value)}
+          />
+        </div>
+        <Button
+          variant="subtle"
+          className="mt-2"
+          onClick={() => void patch({ titleLeft, titleRight })}
+        >
+          Save headings
+        </Button>
+        <p className="mt-1 text-xs text-muted">
+          The logo sits centred between them, on this page and on the share link. Leave
+          either one blank to show nothing on that side.
+        </p>
       </div>
 
       <div>

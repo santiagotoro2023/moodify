@@ -3,6 +3,7 @@ import {
   RING_COLORS,
   RING_COLOR_LABELS,
   SECTION_SEPARATOR,
+  type BadgeAdmin,
   type Cohort,
   type Course,
   type CourseSection,
@@ -10,6 +11,7 @@ import {
   type RingSectionSplit,
   type Widget,
 } from '@moodify/shared';
+import { ArrowDown, ArrowUp } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
 import { ringColorAt } from './index';
 import { Button, ErrorNote, Input, Label, Select, Spinner, Switch } from '@/ui';
@@ -35,6 +37,7 @@ export function WidgetConfigForm({
   const [courses, setCourses] = useState<Course[]>([]);
   const [users, setUsers] = useState<MoodleUser[]>([]);
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
+  const [badges, setBadges] = useState<BadgeAdmin[]>([]);
   /** Course id -> its section names in Moodle's order. Loaded only for ticked courses. */
   const [sections, setSections] = useState<Record<number, string[]>>({});
   const [error, setError] = useState<string | null>(null);
@@ -44,14 +47,16 @@ export function WidgetConfigForm({
   useEffect(() => {
     void (async () => {
       try {
-        const [c, u, co] = await Promise.all([
+        const [c, u, co, b] = await Promise.all([
           api.get<Course[]>('/api/courses'),
           api.get<MoodleUser[]>('/api/users'),
           api.get<Cohort[]>('/api/cohorts'),
+          api.get<BadgeAdmin[]>('/api/badges'),
         ]);
         setCourses(c);
         setUsers(u);
         setCohorts(co);
+        setBadges(b);
       } catch (err) {
         setError(errorMessage(err));
       } finally {
@@ -525,7 +530,104 @@ export function WidgetConfigForm({
                     Auto
                   </button>
                 )}
+                {/* Anything outside the curated row. Committed only once it parses as six
+                    hex digits, so half-typed input never reaches the stored config. */}
+                <Input
+                  className="ml-1 h-7 w-24 py-0 font-mono text-xs"
+                  spellCheck={false}
+                  placeholder={segment.color.startsWith('#') ? segment.color : '#38bdf8'}
+                  defaultValue={ringColors[segment.key] ?? ''}
+                  aria-label={`Hex colour for ${segment.title}`}
+                  onChange={(e) => {
+                    const next = e.target.value.trim();
+                    if (!/^#[0-9a-fA-F]{6}$/.test(next)) return;
+                    setConfig((prev) => ({
+                      ...prev,
+                      colorMode: 'manual',
+                      colors: { ...ringColors, [segment.key]: next },
+                    }));
+                  }}
+                />
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  /**
+   * The badges the ring can show, in the order they will be laid out.
+   *
+   * The pool is every badge from the ticked courses plus the site-wide ones — the same
+   * set the widget queries — so what is listed here is what can appear. Nobody holds all
+   * of them, so this is an order, not a checklist: a person's tile shows their own badges
+   * in this sequence, and a badge nobody in the ring holds simply never renders.
+   */
+  const ringBadgePool = badges.filter(
+    (badge) =>
+      badge.courseId === null ||
+      ringCourseIds.length === 0 ||
+      ringCourseIds.includes(badge.courseId),
+  );
+  const ringBadgeOrder = Array.isArray(config.badgeOrder) ? (config.badgeOrder as number[]) : [];
+  /** Stored order first, then everything unlisted in the order the API returned it. */
+  const ringBadgesOrdered = [
+    ...ringBadgeOrder
+      .map((badgeId) => ringBadgePool.find((badge) => badge.id === badgeId))
+      .filter((badge): badge is BadgeAdmin => badge !== undefined),
+    ...ringBadgePool.filter((badge) => !ringBadgeOrder.includes(badge.id)),
+  ];
+
+  const moveBadge = (index: number, by: number) => {
+    const next = ringBadgesOrdered.map((badge) => badge.id);
+    const target = index + by;
+    const moved = next[index];
+    const displaced = next[target];
+    if (moved === undefined || displaced === undefined) return;
+    next[index] = displaced;
+    next[target] = moved;
+    set('badgeOrder', next);
+  };
+
+  const ringBadgeOrderPicker = () => (
+    <div>
+      <Label>Badge order</Label>
+      <p className="mb-2 text-xs text-muted">
+        The sequence badges are laid out in, filling two columns. Moodify only knows badges
+        that have actually been awarded to somebody — an unearned badge is invisible to the
+        Moodle API and appears here the day it is first issued, at the end of the list.
+      </p>
+      {ringBadgesOrdered.length === 0 ? (
+        <p className="text-xs text-muted">
+          No badges have been awarded in these courses yet.
+        </p>
+      ) : (
+        <div className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-edge p-2">
+          {ringBadgesOrdered.map((badge, index) => (
+            <div key={badge.id} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm">
+              <span className="w-6 shrink-0 tabular-nums text-xs text-muted">{index + 1}</span>
+              <span className="min-w-0 flex-1 truncate" title={badge.courseName ?? 'Site-wide badge'}>
+                {badge.name}
+              </span>
+              <button
+                type="button"
+                aria-label={`Move ${badge.name} up`}
+                disabled={index === 0}
+                onClick={() => moveBadge(index, -1)}
+                className="shrink-0 rounded-md p-1 text-muted hover:bg-surface hover:text-ink disabled:opacity-30"
+              >
+                <ArrowUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                aria-label={`Move ${badge.name} down`}
+                disabled={index === ringBadgesOrdered.length - 1}
+                onClick={() => moveBadge(index, 1)}
+                className="shrink-0 rounded-md p-1 text-muted hover:bg-surface hover:text-ink disabled:opacity-30"
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+              </button>
             </div>
           ))}
         </div>
@@ -943,11 +1045,11 @@ export function WidgetConfigForm({
             <Label htmlFor={id('showTarget')} className="mb-0">
               Show the schedule mark
               <span className="mt-0.5 block text-xs font-normal text-muted">
-                A tick inside each segment for how far the person would be if they had
-                done exactly the work whose date has come round — ahead of the fill when
-                something is overdue, behind it when something was finished early.
-                Nothing is drawn for a course with no tasks, or for someone exactly on
-                schedule.
+                A short pink tick, centred in the segment's width, for how far the person
+                would be if they had done exactly the work whose date has come round —
+                ahead of the fill when something is overdue, behind it when something was
+                finished early. Nothing is drawn for a course with no tasks, or for
+                someone exactly on schedule.
               </span>
             </Label>
             <Switch
@@ -974,16 +1076,6 @@ export function WidgetConfigForm({
             </p>
           </div>
           <div className="flex items-center justify-between gap-4">
-            <Label htmlFor={id('ringLegend')} className="mb-0">
-              Show legend
-            </Label>
-            <Switch
-              id={id('ringLegend')}
-              checked={config.showLegend !== false}
-              onCheckedChange={(v) => set('showLegend', v)}
-            />
-          </div>
-          <div className="flex items-center justify-between gap-4">
             <Label htmlFor={id('ringBadges')} className="mb-0">
               List badges under each ring
               <span className="mt-0.5 block text-xs font-normal text-muted">
@@ -996,6 +1088,7 @@ export function WidgetConfigForm({
               onCheckedChange={(v) => set('showBadges', v)}
             />
           </div>
+          {config.showBadges === true ? ringBadgeOrderPicker() : null}
           {staffToggle()}
           {excludePicker()}
         </>

@@ -16,6 +16,8 @@ const LOGO_SETTING_KEY = 'custom_logo_path';
 interface PublicDashboardRow {
   id: number;
   name: string;
+  title_left: string | null;
+  title_right: string | null;
   background_image_path: string | null;
   anonymize_on_public: boolean;
 }
@@ -29,7 +31,7 @@ interface PublicDashboardRow {
  */
 async function dashboardForToken(token: string): Promise<PublicDashboardRow | null> {
   const { rows } = await sql<PublicDashboardRow>(
-    `select id, name, background_image_path, anonymize_on_public
+    `select id, name, title_left, title_right, background_image_path, anonymize_on_public
        from dashboards
       where public_share_token = $1 and is_public = true`,
     [token],
@@ -161,6 +163,8 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
     const dashboard: Dashboard = {
       id: row.id,
       name: row.name,
+      titleLeft: row.title_left,
+      titleRight: row.title_right,
       backgroundImagePath: row.background_image_path,
       isPublic: true,
       // Never echo the secret back into a page that gets screenshotted or embedded.

@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from 'react';
 import RGL, { WidthProvider, type Layout } from 'react-grid-layout';
-import type { Dashboard, Widget, WidgetData, WidgetDataError } from '@moodify/shared';
-import { ChevronDown, ChevronUp, GripVertical, Pencil, Settings2, Trash2 } from 'lucide-react';
+import { DEFAULT_LOGO_HEIGHT, type Dashboard, type Widget } from '@moodify/shared';
+import { ChevronDown, ChevronUp, Settings2, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
 import { Button, Dialog } from '@/ui';
-import { WIDGET_META, WidgetBody, autoTitle } from '@/widgets';
+import { WidgetBody } from '@/widgets';
 import { WidgetConfigForm } from '@/widgets/ConfigForm';
 
 const GridLayout = WidthProvider(RGL);
@@ -24,6 +24,8 @@ const GridLayout = WidthProvider(RGL);
  * The grid props below are the rest of that story: a widget goes where it is put and
  * stays the size it was given. Nothing in this component may move a widget on its own.
  */
+const DEFAULT_LOGO = '/brand/moodify-logo.svg';
+
 const COLS = 12;
 const COLLAPSED_H = 1;
 
@@ -52,100 +54,90 @@ export function StickyBackground({ imageUrl }: { imageUrl: string | null }) {
   );
 }
 
+/**
+ * A widget is its content and nothing else.
+ *
+ * There is no title bar: no icon, no name, no rename. The controls only exist for an
+ * admin, and they float over the top-right corner on hover rather than reserving a row
+ * that would be empty on a wall display. The widget's stored `title` is still what the
+ * dashboard calls it internally — it is simply never painted.
+ */
+/**
+ * The heading above the grid: the logo dead centre, with a heading either side of it.
+ *
+ * A three-column grid with equal outer tracks, not a flex row — the logo has to sit on
+ * the page's centre line whatever the two headings say, and with flex it drifts towards
+ * whichever side has less text. The dashboard's own name is not here; that stays the
+ * internal label on the tab.
+ */
+export function DashboardHeading({
+  dashboard,
+  logoUrl,
+  logoHeight,
+}: {
+  dashboard: Pick<Dashboard, 'titleLeft' | 'titleRight'>;
+  logoUrl: string | null | undefined;
+  logoHeight: number | null | undefined;
+}) {
+  return (
+    <div className="mb-5 grid grid-cols-3 items-center gap-4">
+      <h1 className="justify-self-end text-right text-lg font-semibold sm:text-xl">
+        {dashboard.titleLeft}
+      </h1>
+      <img
+        src={logoUrl || DEFAULT_LOGO}
+        alt="Moodify"
+        className="w-auto max-w-full justify-self-center"
+        style={{ height: `${logoHeight ?? DEFAULT_LOGO_HEIGHT}px` }}
+        onError={(event) => {
+          event.currentTarget.src = DEFAULT_LOGO;
+        }}
+      />
+      <h1 className="justify-self-start text-left text-lg font-semibold sm:text-xl">
+        {dashboard.titleRight}
+      </h1>
+    </div>
+  );
+}
+
 function WidgetFrame({
-  title,
-  icon,
   collapsed,
   readOnly,
   onToggleCollapse,
-  onRename,
   onConfigure,
   onRemove,
   children,
 }: {
-  title: string;
-  icon?: ReactNode;
   collapsed: boolean;
   readOnly?: boolean;
   onToggleCollapse?: () => void;
-  onRename?: (title: string) => void;
   onConfigure?: () => void;
   onRemove?: () => void;
   children: ReactNode;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(title);
-
-  const commit = () => {
-    setEditing(false);
-    const next = draft.trim();
-    if (next && next !== title) onRename?.(next);
-  };
-
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-[14px] border border-edge bg-surface shadow-[var(--shadow-widget)] backdrop-blur-xl">
-      <header className="flex items-center gap-1.5 px-3 py-2">
-        {/* Only this element carries the drag class, so the buttons stay clickable. */}
-        {!readOnly ? (
-          <span className="widget-drag-handle -ml-1 p-1 text-muted/60 hover:text-muted">
-            <GripVertical className="h-4 w-4" />
-          </span>
-        ) : null}
-        {icon ? <span className="text-muted">{icon}</span> : null}
+    <div className="group relative flex h-full flex-col overflow-hidden rounded-[14px] border border-edge bg-surface shadow-[var(--shadow-widget)] backdrop-blur-xl">
+      {!readOnly ? (
+        <span className="absolute right-1.5 top-1.5 z-10 flex items-center rounded-xl bg-ground/80 opacity-0 shadow-sm backdrop-blur transition group-hover:opacity-100 focus-within:opacity-100">
+          <Button variant="ghost" size="icon" aria-label="Configure widget" onClick={onConfigure}>
+            <Settings2 className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={collapsed ? 'Expand widget' : 'Collapse widget'}
+            onClick={onToggleCollapse}
+          >
+            {collapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+          </Button>
+          <Button variant="ghost" size="icon" aria-label="Remove widget" onClick={onRemove}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </span>
+      ) : null}
 
-        {editing ? (
-          <input
-            value={draft}
-            autoFocus
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commit();
-              if (e.key === 'Escape') {
-                setDraft(title);
-                setEditing(false);
-              }
-            }}
-            className="min-w-0 flex-1 rounded-md bg-ground-soft px-1.5 py-0.5 text-sm outline-none ring-1 ring-accent"
-          />
-        ) : (
-          <h3 className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>
-            {title}
-          </h3>
-        )}
-
-        {!readOnly ? (
-          <span className="flex shrink-0 items-center">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Rename widget"
-              onClick={() => {
-                setDraft(title);
-                setEditing(true);
-              }}
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Configure widget" onClick={onConfigure}>
-              <Settings2 className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={collapsed ? 'Expand widget' : 'Collapse widget'}
-              onClick={onToggleCollapse}
-            >
-              {collapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Remove widget" onClick={onRemove}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </span>
-        ) : null}
-      </header>
-
-      {!collapsed ? <div className="min-h-0 flex-1 overflow-auto px-3 pb-3">{children}</div> : null}
+      {/* Collapsed leaves the bare frame, which is the only handle left to grab. */}
+      {!collapsed ? <div className="min-h-0 flex-1 overflow-auto p-3">{children}</div> : null}
     </div>
   );
 }
@@ -161,7 +153,6 @@ export function DashboardGrid({
   publicToken?: string;
   onChanged: () => void;
 }) {
-  const [titles, setTitles] = useState<Record<number, string>>({});
   const [configuring, setConfiguring] = useState<Widget | null>(null);
   /** Set when saving the arrangement failed — losing it silently is the worst outcome. */
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -250,7 +241,10 @@ export function DashboardGrid({
         rowHeight={56}
         margin={[16, 16]}
         containerPadding={[0, 0]}
-        draggableHandle=".widget-drag-handle"
+        // No handle element left to point at now that the title bar is gone, so the
+        // whole widget drags — except anything you could click or type into, which
+        // would otherwise be unreachable inside a draggable surface.
+        draggableCancel="button, a, input, select, textarea, label, [role='dialog']"
         isDraggable={!readOnly}
         isResizable={!readOnly}
         // Free placement. `compactType="vertical"` is gravity: react-grid-layout runs
@@ -283,38 +277,22 @@ export function DashboardGrid({
           persist(next);
         }}
       >
-        {widgets.map((widget) => {
-          const Icon = WIDGET_META[widget.type].icon;
-          return (
-            <div key={String(widget.id)}>
-              <WidgetFrame
-                title={widget.title ?? titles[widget.id] ?? autoTitle(widget, null)}
-                icon={<Icon className="h-4 w-4" />}
-                collapsed={widget.isCollapsed}
-                readOnly={readOnly}
-                onToggleCollapse={() => void patch(widget, { isCollapsed: !widget.isCollapsed })}
-                onRename={(title) => void patch(widget, { title })}
-                onConfigure={() => setConfiguring(widget)}
-                onRemove={() => {
-                  if (!confirm('Remove this widget?')) return;
-                  void api.del(`/api/widgets/${widget.id}`).then(onChanged);
-                }}
-              >
-                <WidgetBody
-                  widget={widget}
-                  publicToken={publicToken}
-                  onData={(data: WidgetData | WidgetDataError) =>
-                    setTitles((prev) =>
-                      prev[widget.id] === autoTitle(widget, data)
-                        ? prev
-                        : { ...prev, [widget.id]: autoTitle(widget, data) },
-                    )
-                  }
-                />
-              </WidgetFrame>
-            </div>
-          );
-        })}
+        {widgets.map((widget) => (
+          <div key={String(widget.id)}>
+            <WidgetFrame
+              collapsed={widget.isCollapsed}
+              readOnly={readOnly}
+              onToggleCollapse={() => void patch(widget, { isCollapsed: !widget.isCollapsed })}
+              onConfigure={() => setConfiguring(widget)}
+              onRemove={() => {
+                if (!confirm('Remove this widget?')) return;
+                void api.del(`/api/widgets/${widget.id}`).then(onChanged);
+              }}
+            >
+              <WidgetBody widget={widget} publicToken={publicToken} />
+            </WidgetFrame>
+          </div>
+        ))}
       </GridLayout>
 
       <Dialog

@@ -35,8 +35,9 @@ import type {
   RingMarker,
   RingSize,
 } from '@moodify/shared';
+import { createPortal } from 'react-dom';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
-import { Button, EmptyState, ErrorNote, Spinner } from '@/ui';
+import { Button, Dialog, EmptyState, ErrorNote, Spinner } from '@/ui';
 
 type Payload = WidgetData | WidgetDataError;
 
@@ -173,32 +174,46 @@ function BadgeList({
   badges,
   badgeSize,
   uniform,
+  columns,
+  onSelect,
 }: {
   badges: BadgeType[];
   badgeSize: BadgeSize;
   uniform?: boolean;
+  /** Fixed column count. Without it the uniform grid fits as many as the width allows. */
+  columns?: number;
+  /** Makes each chip a button. Unset leaves them plain text, which is what most callers want. */
+  onSelect?: (badge: BadgeType) => void;
 }) {
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
   const { icon, text, pad, track } = BADGE_SIZE[badgeSize];
+  // A fixed count wins over the track width: two columns means two columns even when the
+  // tile is narrow enough that auto-fill would drop to one.
+  const template =
+    columns === undefined ? `repeat(auto-fill, minmax(${track}, 1fr))` : `repeat(${columns}, minmax(0, 1fr))`;
+  const Chip = onSelect === undefined ? 'span' : 'button';
   return (
     <ul
-      className={cn('gap-2', uniform ? 'grid' : 'flex flex-wrap')}
-      style={
-        uniform ? { gridTemplateColumns: `repeat(auto-fill, minmax(${track}, 1fr))` } : undefined
-      }
+      className={cn('gap-2', uniform || columns !== undefined ? 'grid' : 'flex flex-wrap')}
+      style={uniform || columns !== undefined ? { gridTemplateColumns: template } : undefined}
     >
       {badges.map((badge) => (
-        <li
-          key={badge.id}
-          className={cn('flex items-center gap-2 rounded-full bg-white/6', pad, uniform && 'min-w-0')}
-          title={badge.description ?? badge.name}
-        >
-          <BadgeImage badge={badge} size={icon} />
-          <span className={cn('leading-snug', text, uniform && 'min-w-0 break-words')}>
-            {badge.name}
-          </span>
+        <li key={badge.id} className={cn(uniform && 'min-w-0')}>
+          <Chip
+            type={onSelect === undefined ? undefined : 'button'}
+            onClick={onSelect === undefined ? undefined : () => onSelect(badge)}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-full bg-white/6 text-left',
+              pad,
+              onSelect === undefined ? '' : 'transition hover:bg-white/12',
+            )}
+            title={badge.customDescription ?? badge.description ?? badge.name}
+          >
+            <BadgeImage badge={badge} size={icon} />
+            <span className={cn('leading-snug', text, 'min-w-0 break-words')}>{badge.name}</span>
+          </Chip>
         </li>
       ))}
     </ul>
@@ -217,6 +232,9 @@ const LINE_COLORS = [
 
 /** The one red in the app. In a ring it means overdue and nothing else. */
 const OVERDUE_COLOR = '#f43f5e';
+
+/** The schedule mark. Pink rather than white: present without competing with the fill. */
+const TARGET_COLOR = '#f9a8d4';
 
 /**
  * Segment colours, generated from the number of courses on screen rather than picked
@@ -956,7 +974,6 @@ interface RingOptions {
   colors: Record<string, string>;
   marker: RingMarker;
   showTarget: boolean;
-  showLegend: boolean;
   showBadges: boolean;
   badgeSize: BadgeSize;
 }
@@ -975,7 +992,6 @@ function ringOptionsOf(config: unknown): RingOptions {
         : {},
     marker: (marker === 'avatar' || marker === 'both' ? marker : 'name') as RingMarker,
     showTarget: raw.showTarget !== false,
-    showLegend: raw.showLegend !== false,
     showBadges: raw.showBadges === true,
     badgeSize: (badge === 'medium' || badge === 'large' ? badge : 'small') as BadgeSize,
   };
@@ -1072,6 +1088,7 @@ function PersonRing({
   options,
   instance,
   rows,
+  onBadge,
 }: {
   entry: CompletionRingsEntry;
   colorOf: (segmentKey: string) => string;
@@ -1079,6 +1096,7 @@ function PersonRing({
   rows: number;
   options: RingOptions;
   instance: string;
+  onBadge: (badge: BadgeType) => void;
 }) {
   const size = RING_PX[options.ringSize];
   const stroke = Math.max(8, Math.round(size * 0.11));
@@ -1156,16 +1174,22 @@ function PersonRing({
                 </path>
               ) : null}
               {/* Where the deadlines say this person should be by today: ahead of the
-                  fill when work is owed, behind it when work was finished early. */}
+                  fill when work is owed, behind it when work was finished early.
+
+                  Half the segment's width and centred in it, rather than spanning the
+                  whole arc: a full-width rule reads as a cut through the ring, which is
+                  a louder statement than "here is the plan". Soft pink at part opacity
+                  for the same reason — it has to be findable, not the first thing seen. */}
               {options.showTarget && targetAngle !== null ? (
                 <line
-                  x1={center + (radius - stroke / 2) * Math.sin(targetAngle)}
-                  y1={center - (radius - stroke / 2) * Math.cos(targetAngle)}
-                  x2={center + (radius + stroke / 2) * Math.sin(targetAngle)}
-                  y2={center - (radius + stroke / 2) * Math.cos(targetAngle)}
-                  stroke="#e6edf3"
+                  x1={center + (radius - stroke / 4) * Math.sin(targetAngle)}
+                  y1={center - (radius - stroke / 4) * Math.cos(targetAngle)}
+                  x2={center + (radius + stroke / 4) * Math.sin(targetAngle)}
+                  y2={center - (radius + stroke / 4) * Math.cos(targetAngle)}
+                  stroke={TARGET_COLOR}
                   strokeWidth={2}
-                  opacity={0.9}
+                  strokeLinecap="round"
+                  opacity={0.75}
                 />
               ) : null}
             </g>
@@ -1265,7 +1289,13 @@ function PersonRing({
       {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} rows={rows} /> : null}
       {options.showBadges ? (
         <div className="mt-3 w-full">
-          <BadgeList badges={entry.badges} badgeSize={options.badgeSize} uniform />
+          <BadgeList
+            badges={entry.badges}
+            badgeSize={options.badgeSize}
+            uniform
+            columns={2}
+            onSelect={onBadge}
+          />
         </div>
       ) : null}
     </div>
@@ -1274,6 +1304,7 @@ function PersonRing({
 
 function CompletionRings({ data, config }: { data: CompletionRingsData; config: RingOptions }) {
   const instance = useId().replace(/:/g, '');
+  const [openBadge, setOpenBadge] = useState<BadgeType | null>(null);
   const colors = ringColorMap(data.legend, config);
   const colorOf = (segmentKey: string) => colors.get(segmentKey) ?? '#38bdf8';
 
@@ -1291,25 +1322,15 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
   const rows = Math.max(...data.entries.map((entry) => entry.segments.length));
 
   return (
-    <div className="space-y-3">
-      {config.showLegend ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-          {data.legend.map((item) => (
-            <span key={item.key} className="flex items-center gap-1.5" title={item.title}>
-              <span
-                className="h-2 w-2 shrink-0 rounded-full"
-                style={{ background: colorOf(item.key) }}
-              />
-              {item.label}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
+    <>
       {/* auto-fit, not auto-fill: empty tracks collapse, so three people on a full-width
           widget stretch across it and their rings grow with it, rather than huddling at
           the minimum width with dead space to the right. Ring size sets that minimum —
-          how densely the wall packs — and no longer the literal pixel diameter. */}
+          how densely the wall packs — and no longer the literal pixel diameter.
+
+          There is no legend above the wall: every tile already carries one, either in the
+          middle of the ring or as the rows under it, so a second copy at the top said
+          nothing the reader did not have in front of them. */}
       <div
         className="grid gap-3"
         style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${tile}px, 1fr))` }}
@@ -1322,53 +1343,54 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
             options={config}
             instance={instance}
             rows={rows}
+            onBadge={setOpenBadge}
           />
         ))}
       </div>
-    </div>
+
+      <BadgeDialog badge={openBadge} onClose={() => setOpenBadge(null)} />
+    </>
+  );
+}
+
+/**
+ * One badge, full size, with whatever description it has been given on the Badges page.
+ *
+ * Portalled to <body> because a react-grid-layout item positions itself with a CSS
+ * transform, and a transformed ancestor makes `position: fixed` resolve against *it*
+ * rather than the viewport — the overlay would be trapped inside the widget it came from,
+ * clipped by its overflow, at the wrong place on screen.
+ */
+function BadgeDialog({ badge, onClose }: { badge: BadgeType | null; onClose: () => void }) {
+  if (badge === null) return null;
+  const image = assetUrl(badge.imageUrl);
+  const text = badge.customDescription ?? badge.description;
+  return createPortal(
+    <Dialog open onClose={onClose} title={badge.name}>
+      {image ? (
+        <img
+          src={image}
+          alt=""
+          className="mx-auto h-40 w-40 object-contain sm:h-52 sm:w-52"
+        />
+      ) : (
+        <span className="mx-auto grid h-40 w-40 place-items-center rounded-full bg-white/8">
+          <Award className="h-16 w-16 text-muted" aria-hidden="true" />
+        </span>
+      )}
+      {text ? (
+        <p className="whitespace-pre-wrap text-center text-sm text-muted">{text}</p>
+      ) : (
+        <p className="text-center text-sm text-muted">
+          No description yet — one can be written on the Badges page.
+        </p>
+      )}
+    </Dialog>,
+    document.body,
   );
 }
 
 // ---------------------------------------------------------------------------
-
-export function autoTitle(widget: Widget, data: Payload | null): string {
-  if (data && data.type !== 'error') {
-    switch (data.type) {
-      case 'completion_table':
-        return data.courses.length === 1 && data.courses[0]
-          ? `Completion — ${data.courses[0].fullname}`
-          : 'Completion — all courses';
-      case 'badge_cards':
-      case 'badge_list':
-        return data.users.length === 1 && data.users[0]
-          ? `Badges — ${data.users[0].user.fullname}`
-          : 'Badges';
-      case 'course_overview':
-        return `${data.course.shortname} overview`;
-      case 'leaderboard':
-        return 'Leaderboard';
-      case 'user_list':
-        return data.user.fullname;
-      case 'progress_chart':
-        return data.metric === 'badges' ? 'Badges over time' : 'Completion over time';
-      case 'completion_rings':
-        return data.legend.length === 1 && data.legend[0]
-          ? `Progress — ${data.legend[0].title}`
-          : 'Progress rings';
-    }
-  }
-  const labels: Record<Widget['type'], string> = {
-    completion_table: 'Completion',
-    badge_cards: 'Badges & progress',
-    badge_list: 'Badges',
-    course_overview: 'Course overview',
-    leaderboard: 'Leaderboard',
-    user_list: 'User',
-    progress_chart: 'Over time',
-    completion_rings: 'Progress rings',
-  };
-  return labels[widget.type];
-}
 
 export const WIDGET_META: Record<
   Widget['type'],

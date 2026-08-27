@@ -261,8 +261,14 @@ export const completionRingsConfig = z.object({
    * segment left unset, so nothing is ever drawn colourless.
    */
   colorMode: z.enum(['auto', 'manual']).default('auto'),
-  /** Segment key (`courseId`, or `courseId:section`) -> colour. Only read in 'manual'. */
-  colors: z.record(z.string(), z.enum(RING_COLORS)).default({}),
+  /**
+   * Segment key (`courseId`, or `courseId:section`) -> colour. Only read in 'manual'.
+   *
+   * Any 6-digit hex, not just RING_COLORS: the curated set is what the picker offers,
+   * not what the widget accepts. Red included — an overdue segment still overrides it,
+   * so the worst a red segment costs is that "overdue" stops standing out on that one.
+   */
+  colors: z.record(z.string(), z.string().regex(/^#[0-9a-fA-F]{6}$/)).default({}),
   /**
    * Segment key -> legend text, for whole courses and sections alike. Unset falls back to
    * the course's shortname or the section's name in Moodle.
@@ -277,9 +283,13 @@ export const completionRingsConfig = z.object({
   marker: z.enum(RING_MARKERS).default('name'),
   /** Draw the "where you should be by now" tick inside each segment. */
   showTarget: z.boolean().default(true),
-  showLegend: z.boolean().default(true),
   /** List every badge the person holds under their ring. */
   showBadges: z.boolean().default(false),
+  /**
+   * Badge ids, in the order they should be laid out. Badges not listed follow, A-Z, so
+   * a badge created in Moodle after the order was set appears rather than vanishing.
+   */
+  badgeOrder: z.array(z.number().int().positive()).max(200).default([]),
   badgeSize,
   includeStaff: z.boolean().default(false),
   excludeUserIds,
@@ -391,8 +401,17 @@ export interface Badge {
   id: number;
   name: string;
   description: string | null;
+  /** Written in Moodify, on the Badges page. Shown in the badge pop-up. */
+  customDescription: string | null;
   courseId: number | null;
   imageUrl: string | null;
+}
+
+/** A badge as listed on the Badges page, with the context needed to tell two apart. */
+export interface BadgeAdmin extends Badge {
+  courseName: string | null;
+  /** How many students hold it. Moodify only knows badges that were actually awarded. */
+  holders: number;
 }
 
 /** `percent` is null when a course has no completion-tracked activities (§9.2). */
@@ -424,6 +443,12 @@ export interface Widget extends GridPosition {
 export interface Dashboard {
   id: number;
   name: string;
+  /**
+   * The two headings shown either side of the centred logo above the grid. The
+   * dashboard's own `name` stays internal — it labels the tab in the admin UI.
+   */
+  titleLeft: string | null;
+  titleRight: string | null;
   backgroundImagePath: string | null;
   isPublic: boolean;
   publicShareToken: string | null;
