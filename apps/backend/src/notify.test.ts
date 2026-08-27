@@ -32,6 +32,7 @@ function candidate(over: Partial<Candidate> = {}): Candidate {
     deadlineId: 1,
     courseName: 'Netzwerktechnik',
     activityName: 'ISO/OSI',
+    activityUrl: 'https://moodle.test/mod/assign/view.php?id=42',
     userId: 7,
     fullname: 'Zoe',
     email: 'zoe@example.test',
@@ -146,6 +147,26 @@ test('everything overdue reaches one person in one mail, oldest first', () => {
   );
   assert.equal(rest.length, 1);
   assert.equal(rest[0]?.subject, 'Overdue: Subnetting');
+});
+
+test('the mail links to Moodle in HTML and spells the URL out in the fallback', () => {
+  const [mail] = planNotifications([BEFORE], [candidate()], new Set(), NOW);
+  // The HTML body is what nearly everyone sees, and a name they can click beats a name
+  // they have to go and find.
+  assert.match(
+    mail?.html ?? '',
+    /<a href="https:\/\/moodle\.test\/mod\/assign\/view\.php\?id=42">ISO\/OSI<\/a>/,
+  );
+  // Stripping the markup would take the link with it, so the text version carries the
+  // address itself.
+  assert.match(mail?.text ?? '', /https:\/\/moodle\.test\/mod\/assign\/view\.php\?id=42/);
+  // And the subject is text whatever the body was written in.
+  assert.equal(mail?.subject, 'Due soon: ISO/OSI');
+
+  // No Moodle connection to build a URL from: the name still reads normally.
+  const [plain] = planNotifications([BEFORE], [candidate({ activityUrl: null })], new Set(), NOW);
+  assert.doesNotMatch(plain?.html ?? '', /<a /);
+  assert.match(plain?.html ?? '', /ISO\/OSI/);
 });
 
 test('a yearly rule notifies again the next time it comes round', () => {

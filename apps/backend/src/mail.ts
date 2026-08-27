@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer';
+import { mailFontStack } from '@moodify/shared';
 import { decryptSecret, encryptSecret } from './crypto.ts';
 import { sql } from './db.ts';
 
@@ -32,6 +33,11 @@ export interface SmtpConfig {
   dailyReport: boolean;
   dailyReportHour: number;
   sendHour: number;
+  mailFont: string;
+  mailFontSize: number;
+  mailTextColor: string;
+  mailAccentColor: string;
+  mailShowLogo: boolean;
   lastReportOn: Date | null;
 }
 
@@ -53,6 +59,11 @@ type SmtpRow = {
   daily_report: boolean;
   daily_report_hour: number;
   send_hour: number;
+  mail_font: string;
+  mail_font_size: number;
+  mail_text_color: string;
+  mail_accent_color: string;
+  mail_show_logo: boolean;
   last_report_on: Date | null;
 };
 
@@ -61,7 +72,8 @@ export async function loadSmtpConfig(): Promise<SmtpConfig | null> {
   const { rows } = await sql<SmtpRow>(
     `select enabled, transport, graph_tenant_id, graph_client_id, graph_account,
             graph_refresh_token_encrypted, host, port, secure, username, password_encrypted,
-            from_name, from_email, admin_email, daily_report, daily_report_hour, send_hour, last_report_on
+            from_name, from_email, admin_email, daily_report, daily_report_hour, send_hour, mail_font, mail_font_size,
+            mail_text_color, mail_accent_color, mail_show_logo, last_report_on
        from smtp_settings order by id limit 1`,
   );
   const row = rows[0];
@@ -96,6 +108,11 @@ export async function loadSmtpConfig(): Promise<SmtpConfig | null> {
     dailyReport: row.daily_report,
     dailyReportHour: row.daily_report_hour,
     sendHour: row.send_hour,
+    mailFont: row.mail_font,
+    mailFontSize: row.mail_font_size,
+    mailTextColor: row.mail_text_color,
+    mailAccentColor: row.mail_accent_color,
+    mailShowLogo: row.mail_show_logo,
     lastReportOn: row.last_report_on,
   };
 }
@@ -220,7 +237,82 @@ async function graphAccessToken(config: SmtpConfig): Promise<string> {
 export interface Mail {
   to: string;
   subject: string;
+  /** Always present: some clients, and every archive, only ever show this one. */
   text: string;
+  /** The body as HTML, without the styling shell — wrapHtmlMail adds that at send time. */
+  html?: string;
+}
+
+// ---------------------------------------------------------------------------
+// HTML mail
+// ---------------------------------------------------------------------------
+
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * The plain-text fallback, made from the same rendered HTML rather than from a second
+ * template — two templates would drift, and the one nobody previews is the one that rots.
+ */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** The logo to put at the top, absolute — a relative src is a broken box in every inbox. */
+async function mailLogoUrl(): Promise<string | null> {
+  const { rows } = await sql<{ key: string; value: string }>(
+    "select key, value from app_settings where key in ('custom_logo_path', 'public_base_url')",
+  );
+  const byKey = new Map(rows.map((row) => [row.key, row.value]));
+  const base = (byKey.get('public_base_url') ?? '').trim().replace(/\/+$/, '');
+  if (base === '') return null;
+  const stored = (byKey.get('custom_logo_path') ?? '').trim();
+  return `${base}/${stored === '' ? 'brand/moodify-logo.svg' : `assets/${stored}`}`;
+}
+
+/**
+ * Wraps a body fragment in the configured look.
+ *
+ * Inline styles on every element, and a table-free single column: mail clients strip
+ * <style> blocks, ignore stylesheets, and Outlook re-flows anything clever. The shell is
+ * deliberately plain so the admin's own HTML in the body decides everything else.
+ */
+export function wrapHtmlMail(config: SmtpConfig, body: string, logoUrl: string | null): string {
+  const font = mailFontStack(config.mailFont);
+  const header =
+    logoUrl === null
+      ? ''
+      : `<img src="${escapeHtml(logoUrl)}" alt="" style="height:32px;width:auto;display:block;margin:0 0 20px" />`;
+  return [
+    `<div style="margin:0;padding:24px;background:#f5f7fa">`,
+    `<div style="max-width:600px;margin:0 auto;padding:28px;background:#ffffff;border-radius:14px;`,
+    `font-family:${font};font-size:${config.mailFontSize}px;line-height:1.55;color:${config.mailTextColor}">`,
+    header,
+    // A mail client applies its own blue to any <a> that does not say otherwise, and it
+    // will not read a <style> block to find out. Only links that carry no style of their
+    // own are touched, so an admin who styled one in the body keeps it.
+    `<div>${body.replace(/<a\s+(?![^>]*\bstyle=)/gi, `<a style="color:${config.mailAccentColor}" `)}</div>`,
+    `<hr style="border:none;border-top:1px solid #e3e8ee;margin:24px 0 12px" />`,
+    `<p style="margin:0;font-size:12px;color:#7b8794">Sent by Moodify</p>`,
+    `</div></div>`,
+  ].join('');
 }
 
 function describeSendError(err: unknown): string {
@@ -254,7 +346,11 @@ async function sendViaGraph(
         body: JSON.stringify({
           message: {
             subject: mail.subject,
-            body: { contentType: 'Text', content: mail.text },
+            // Graph carries one body, not two: HTML when there is any, text otherwise.
+            body:
+              mail.html === undefined
+                ? { contentType: 'Text', content: mail.text }
+                : { contentType: 'HTML', content: mail.html },
             toRecipients: [{ emailAddress: { address: mail.to } }],
           },
           saveToSentItems: false,
@@ -284,9 +380,18 @@ export async function sendMails(
 ): Promise<{ sent: number; failed: number; error: string | null }> {
   if (mails.length === 0) return { sent: 0, failed: 0, error: null };
 
+  // Styling is applied here, once, rather than by every caller: the shell depends on
+  // settings the callers have no reason to load.
+  const logoUrl = mails.some((mail) => mail.html !== undefined) && config.mailShowLogo
+    ? await mailLogoUrl()
+    : null;
+  const dressed = mails.map((mail) =>
+    mail.html === undefined ? mail : { ...mail, html: wrapHtmlMail(config, mail.html, logoUrl) },
+  );
+
   const result = config.transport === 'graph'
-    ? await sendViaGraph(config, mails)
-    : await sendViaSmtp(config, mails);
+    ? await sendViaGraph(config, dressed)
+    : await sendViaSmtp(config, dressed);
   const { sent, error } = result;
 
   await sql(
@@ -310,7 +415,13 @@ async function sendViaSmtp(
 
   for (const mail of mails) {
     try {
-      await transport.sendMail({ from, to: mail.to, subject: mail.subject, text: mail.text });
+      await transport.sendMail({
+        from,
+        to: mail.to,
+        subject: mail.subject,
+        text: mail.text,
+        ...(mail.html === undefined ? {} : { html: mail.html }),
+      });
       sent += 1;
     } catch (err) {
       failed += 1;

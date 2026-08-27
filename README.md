@@ -389,6 +389,19 @@ address for is skipped, and Settings names them, because a reminder nobody recei
 one that was never configured. Rules are global — "5 days before" is written once and applies to
 every task, and several lead-time rules can coexist. The overdue rule fires once per occurrence.
 
+**Reminders are HTML, with a plain-text copy.** Font, text size, text colour and link colour are
+settings; anything more specific is HTML written straight into the rule's own text, which is the
+laziest thing that supports bold, colours and images at once and needs no editor. The body is
+rendered twice from the same template — once with HTML values, once with plain ones — rather than
+kept as two templates, because the copy nobody previews is the copy that rots. Styles are inlined
+on a wrapper at send time: mail clients discard `<style>` blocks, and a link with no inline colour
+gets the client's own blue, so links that carry no style of their own are given the accent colour
+on the way out.
+
+Each activity in a reminder links to `/mod/<modname>/view.php?<cmid>` on the configured Moodle —
+its canonical URL, and the reason `modname` is stored at all. The plain-text copy spells the
+address out, since stripping the markup would otherwise take the link with it.
+
 **One batch a day, and a manual override.** The pass runs every fifteen minutes but only mails at
 or after the configured hour (default 07:00): eligibility changes at midnight, so the first pass
 past the hour carries the whole day's reminders and nobody is told at 03:00 that something is due

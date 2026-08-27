@@ -43,6 +43,11 @@ const smtpBodySchema = z.object({
   dailyReport: z.boolean().optional(),
   dailyReportHour: z.number().int().min(0).max(23).optional(),
   sendHour: z.number().int().min(0).max(23).optional(),
+  mailFont: z.enum(['system', 'sans', 'serif', 'mono']).optional(),
+  mailFontSize: z.number().int().min(10).max(28).optional(),
+  mailTextColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  mailAccentColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  mailShowLogo: z.boolean().optional(),
 });
 
 const ruleBodySchema = z
@@ -100,13 +105,20 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       daily_report: boolean;
       daily_report_hour: number;
       send_hour: number;
+      mail_font: string;
+      mail_font_size: number;
+      mail_text_color: string;
+      mail_accent_color: string;
+      mail_show_logo: boolean;
       last_sent_at: Date | null;
       last_error: string | null;
     }>(
       `select enabled, transport, graph_tenant_id, graph_client_id, graph_account,
               graph_refresh_token_encrypted is not null as connected,
               host, port, secure, username, password_encrypted, from_name, from_email,
-              admin_email, daily_report, daily_report_hour, send_hour, last_sent_at, last_error
+              admin_email, daily_report, daily_report_hour, send_hour,
+              mail_font, mail_font_size, mail_text_color, mail_accent_color, mail_show_logo,
+              last_sent_at, last_error
          from smtp_settings order by id limit 1`,
     );
     const row = rows[0];
@@ -142,6 +154,11 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       dailyReport: row?.daily_report ?? false,
       dailyReportHour: row?.daily_report_hour ?? 7,
       sendHour: row?.send_hour ?? 7,
+      mailFont: row?.mail_font ?? 'system',
+      mailFontSize: row?.mail_font_size ?? 15,
+      mailTextColor: row?.mail_text_color ?? '#1f2933',
+      mailAccentColor: row?.mail_accent_color ?? '#2563eb',
+      mailShowLogo: row?.mail_show_logo ?? false,
       lastSentAt: row?.last_sent_at?.toISOString() ?? null,
       lastError: row?.last_error ?? null,
       usersWithoutEmail: missing.map((entry) => entry.fullname),
@@ -179,7 +196,12 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
          admin_email        = coalesce($9, admin_email),
          daily_report       = coalesce($10, daily_report),
          daily_report_hour  = coalesce($11, daily_report_hour),
-         send_hour          = coalesce($15, send_hour)`,
+         send_hour          = coalesce($15, send_hour),
+         mail_font          = coalesce($16, mail_font),
+         mail_font_size     = coalesce($17, mail_font_size),
+         mail_text_color    = coalesce($18, mail_text_color),
+         mail_accent_color  = coalesce($19, mail_accent_color),
+         mail_show_logo     = coalesce($20, mail_show_logo)`,
       [
         body.enabled ?? null,
         body.host ?? null,
@@ -196,6 +218,11 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
         body.graphTenantId ?? null,
         body.graphClientId ?? null,
         body.sendHour ?? null,
+        body.mailFont ?? null,
+        body.mailFontSize ?? null,
+        body.mailTextColor ?? null,
+        body.mailAccentColor ?? null,
+        body.mailShowLogo ?? null,
       ],
     );
     return { ok: true };

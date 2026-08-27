@@ -662,10 +662,32 @@ export interface SmtpState {
   dailyReportHour: number;
   /** Hour of day the reminders go out, so everything arrives in one batch. */
   sendHour: number;
+  mailFont: string;
+  mailFontSize: number;
+  mailTextColor: string;
+  mailAccentColor: string;
+  mailShowLogo: boolean;
   lastSentAt: string | null;
   lastError: string | null;
   /** Students Moodle gave no address for; they are skipped rather than guessed at. */
   usersWithoutEmail: string[];
+}
+
+/**
+ * Fonts a reminder can be set in. Every stack ends in a generic family, because the only
+ * safe assumption about a mail client is that it has one of the five.
+ */
+export const MAIL_FONTS = [
+  { id: 'system', label: 'System', stack: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif' },
+  { id: 'sans', label: 'Sans (Helvetica)', stack: 'Helvetica, Arial, sans-serif' },
+  { id: 'serif', label: 'Serif (Georgia)', stack: 'Georgia, "Times New Roman", serif' },
+  { id: 'mono', label: 'Monospace', stack: '"SF Mono", Consolas, "Courier New", monospace' },
+] as const;
+
+export type MailFont = (typeof MAIL_FONTS)[number]['id'];
+
+export function mailFontStack(id: string): string {
+  return (MAIL_FONTS.find((font) => font.id === id) ?? MAIL_FONTS[0]).stack;
 }
 
 /** Somebody a task's reminder could reach, for the manual send dialog on the Tasks page. */

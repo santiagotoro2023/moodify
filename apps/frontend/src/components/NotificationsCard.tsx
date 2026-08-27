@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { TEMPLATE_FIELDS, type NotificationRuleDto, type SmtpState } from '@moodify/shared';
+import { MAIL_FONTS, TEMPLATE_FIELDS, type NotificationRuleDto, type SmtpState } from '@moodify/shared';
 import { Mail, Plus, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage, relativeTime } from '@/lib/api';
 import { Button, Card, ErrorNote, Input, Label, Select, Spinner, Switch } from '@/ui';
@@ -95,7 +95,8 @@ function RuleEditor({
         <p className="mt-1 text-xs text-muted">
           Placeholders: {TEMPLATE_FIELDS.map((field) => `{${field}}`).join(', ')}. When one
           message covers several activities, <code>{'{activity}'}</code> becomes a list and
-          the subject says how many.
+          the subject says how many; each entry links to the activity in Moodle. HTML is
+          allowed here and the subject is stripped back to text.
         </p>
       </div>
 
@@ -540,6 +541,79 @@ export function NotificationsCard() {
           Works regardless of the switch above, so the server can be proven before anyone
           else gets mail.
         </p>
+      </div>
+
+      <div className="space-y-3 border-t border-edge pt-4">
+        <h3 className="text-sm font-medium">How the messages look</h3>
+        <p className="text-xs text-muted">
+          Applies to every reminder. A rule's own text may contain HTML — <code>&lt;b&gt;</code>,{' '}
+          <code>&lt;span style="color:#c00"&gt;</code>, <code>&lt;img src="https://…"&gt;</code> —
+          for anything these four do not cover. A plain-text copy is sent alongside for clients
+          that will not show HTML, so nothing depends on the markup arriving.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="mail-font">Font</Label>
+            <Select
+              id="mail-font"
+              value={smtp.mailFont}
+              onChange={(e) => void patch({ mailFont: e.target.value })}
+            >
+              {MAIL_FONTS.map((font) => (
+                <option key={font.id} value={font.id}>
+                  {font.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="mail-size">Text size</Label>
+            <Select
+              id="mail-size"
+              value={String(smtp.mailFontSize)}
+              onChange={(e) => void patch({ mailFontSize: Number(e.target.value) })}
+            >
+              {Array.from({ length: 19 }, (_, index) => index + 10).map((size) => (
+                <option key={size} value={size}>
+                  {size}px
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="mail-color">Text colour</Label>
+            <Input
+              id="mail-color"
+              type="color"
+              className="h-10 p-1"
+              value={smtp.mailTextColor}
+              onChange={(e) => void patch({ mailTextColor: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="mail-accent">Link colour</Label>
+            <Input
+              id="mail-accent"
+              type="color"
+              className="h-10 p-1"
+              value={smtp.mailAccentColor}
+              onChange={(e) => void patch({ mailAccentColor: e.target.value })}
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <Label className="mb-0">
+            Logo at the top
+            <span className="mt-0.5 block text-xs font-normal text-muted">
+              Uses the logo from Settings. Needs the public address set under Sharing —
+              a mail client cannot fetch a relative image, and shows a broken box instead.
+            </span>
+          </Label>
+          <Switch
+            checked={smtp.mailShowLogo}
+            onCheckedChange={(v) => void patch({ mailShowLogo: v })}
+          />
+        </div>
       </div>
 
       <div className="space-y-3 border-t border-edge pt-4">

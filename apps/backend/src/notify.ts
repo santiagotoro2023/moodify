@@ -1,7 +1,15 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { deadlineDueAt, deadlineNextDueAt, formatDay, type DeadlineRule } from '@moodify/shared';
 import { sql } from './db.ts';
-import { loadSmtpConfig, renderTemplate, sendMails, smtpIsUsable, type Mail } from './mail.ts';
+import {
+  escapeHtml,
+  htmlToText,
+  loadSmtpConfig,
+  renderTemplate,
+  sendMails,
+  smtpIsUsable,
+  type Mail,
+} from './mail.ts';
 
 /**
  * Task reminders by email.
@@ -28,6 +36,8 @@ export interface Candidate {
   deadlineId: number;
   courseName: string;
   activityName: string;
+  /** The activity in Moodle. Null when no connection is configured to build one from. */
+  activityUrl: string | null;
   userId: number;
   fullname: string;
   email: string | null;
@@ -49,6 +59,8 @@ export interface PlannedMail {
   sent: { deadlineId: number; dueOn: string }[];
   subject: string;
   text: string;
+  /** The body as HTML, without the styling shell. */
+  html: string;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -159,21 +171,49 @@ export function planNotifications(
         a.dueAt.getTime() - b.dueAt.getTime() ||
         a.candidate.activityName.localeCompare(b.candidate.activityName),
     );
+    // Only when they differ: repeating one date down every line of a "due Friday" mail
+    // is noise.
     const spread = new Set(items.map((item) => item.dueOn)).size > 1;
-    const values = {
-      name: group.candidate.fullname,
-      activity: items
-        .map(({ candidate, dueAt }) =>
-          // Only when they differ: repeating one date down every line of a "due Friday"
-          // mail is noise.
-          spread
-            ? `• ${candidate.activityName} (${candidate.courseName}) — due ${formatDay(dueAt)}`
-            : `• ${candidate.activityName} (${candidate.courseName})`,
-        )
-        .join('\n'),
-      course: [...new Set(items.map((item) => item.candidate.courseName))].join(', '),
+    const suffix = ({ dueAt }: Item) => (spread ? ` — due ${formatDay(dueAt)}` : '');
+    const courses = [...new Set(items.map((item) => item.candidate.courseName))].join(', ');
+    const shared = {
       due: formatDay(group.dueAt),
       days: String(Math.max(0, daysBetween(now, group.dueAt))),
+    };
+
+    // Two renders of one template rather than two templates: an admin will preview the
+    // HTML and never look at the fallback, so the fallback must not be a separate thing
+    // that can drift. The plain one keeps the link as a visible URL, which is the only
+    // way it survives at all once the markup is gone.
+    const textValues = {
+      ...shared,
+      name: group.candidate.fullname,
+      course: courses,
+      activity: items
+        .map(
+          (item) =>
+            `• ${item.candidate.activityName} (${item.candidate.courseName})${suffix(item)}` +
+            (item.candidate.activityUrl === null ? '' : `\n  ${item.candidate.activityUrl}`),
+        )
+        .join('\n'),
+    };
+    const htmlValues = {
+      ...shared,
+      name: escapeHtml(group.candidate.fullname),
+      course: escapeHtml(courses),
+      activity:
+        `<ul style="margin:0 0 12px;padding-left:20px">` +
+        items
+          .map((item) => {
+            const label = escapeHtml(item.candidate.activityName);
+            const link =
+              item.candidate.activityUrl === null
+                ? label
+                : `<a href="${escapeHtml(item.candidate.activityUrl)}">${label}</a>`;
+            return `<li style="margin:0 0 4px">${link} (${escapeHtml(item.candidate.courseName)})${escapeHtml(suffix(item))}</li>`;
+          })
+          .join('') +
+        `</ul>`,
     };
 
     planned.push({
@@ -182,15 +222,19 @@ export function planNotifications(
       email,
       sent: items.map((item) => ({ deadlineId: item.candidate.deadlineId, dueOn: item.dueOn })),
       // A subject holding the bullet list would be unreadable, so a multi-item mail says
-      // how many instead of naming one of them and hiding the rest.
-      subject: renderTemplate(group.rule.subject, {
-        ...values,
-        activity:
-          items.length === 1
-            ? (items[0]?.candidate.activityName ?? '')
-            : `${items.length} activities`,
-      }),
-      text: renderTemplate(group.rule.body, values),
+      // how many instead of naming one of them and hiding the rest. Stripped either way:
+      // a subject line is text, however the body was written.
+      subject: htmlToText(
+        renderTemplate(group.rule.subject, {
+          ...textValues,
+          activity:
+            items.length === 1
+              ? (items[0]?.candidate.activityName ?? '')
+              : `${items.length} activities`,
+        }),
+      ),
+      text: htmlToText(renderTemplate(group.rule.body, textValues)),
+      html: renderTemplate(group.rule.body, htmlValues),
     });
   }
   return planned;
@@ -212,6 +256,8 @@ type CandidateRow = {
   deadline_id: number;
   course_name: string;
   activity_name: string;
+  modname: string;
+  cmid: number;
   moodle_user_id: number;
   fullname: string;
   email: string | null;
@@ -266,6 +312,7 @@ export async function loadRule(id: number): Promise<NotificationRule | null> {
 export async function loadCandidates(): Promise<Candidate[]> {
   const { rows } = await sql<CandidateRow>(
     `select d.id as deadline_id, co.fullname as course_name, ca.name as activity_name,
+            ca.modname, d.cmid,
             e.moodle_user_id, u.fullname, u.email,
             d.due_date, d.month, d.weekday, d.nth, d.created_at,
             (ac.cmid is not null) as completed
@@ -286,10 +333,18 @@ export async function loadCandidates(): Promise<Candidate[]> {
                            and cm.moodle_user_id = e.moodle_user_id))`,
   );
 
+  // One lookup for the whole batch. Moodle's canonical URL for any activity is
+  // /mod/<modname>/view.php?id=<cmid>, which is why modname is stored at all.
+  const { rows: connection } = await sql<{ base_url: string }>(
+    'select base_url from moodle_connection order by id limit 1',
+  );
+  const base = (connection[0]?.base_url ?? '').trim().replace(/\/+$/, '');
+
   return rows.map((row) => ({
     deadlineId: row.deadline_id,
     courseName: row.course_name,
     activityName: row.activity_name,
+    activityUrl: base === '' ? null : `${base}/mod/${row.modname}/view.php?id=${row.cmid}`,
     userId: row.moodle_user_id,
     fullname: row.fullname,
     email: row.email,
@@ -384,7 +439,9 @@ export async function deliver(
 ): Promise<number> {
   let sent = 0;
   for (const mail of planned) {
-    const result = await sendMails(config, [{ to: mail.email, subject: mail.subject, text: mail.text }]);
+    const result = await sendMails(config, [
+      { to: mail.email, subject: mail.subject, text: mail.text, html: mail.html },
+    ]);
     if (result.sent === 0) {
       logger.warn({ userId: mail.userId, err: result.error }, 'task reminder failed');
       continue;
