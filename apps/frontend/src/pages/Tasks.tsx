@@ -747,27 +747,30 @@ export default function Tasks() {
                         {sortBy === 'due' ? `${deadline.courseName} · ` : ''}
                         {deadline.cohortName ?? 'Everyone'} · {describeDeadlineRule(deadline)}
                       </p>
-                      {/* The one line anybody scans for, so it is the one line that is
-                          not grey: amber for what is coming, red for what has been
-                          missed. */}
-                      <p
-                        className={cn(
-                          'text-xs font-semibold',
-                          deadline.dueAt !== null
-                            ? 'text-bad'
-                            : deadline.nextDueAt === null
-                              ? 'text-muted'
-                              : 'text-warn',
+                      {/* The date is what anybody is scanning for, so the date is what
+                          is picked out — amber ahead of time, red once it has passed.
+                          Colouring the whole line instead just makes a paragraph of
+                          "Due since" and "next" shout along with it. */}
+                      <p className="truncate text-xs text-muted">
+                        {deadline.dueAt === null ? (
+                          deadline.nextDueAt === null ? (
+                            'No date'
+                          ) : (
+                            <>
+                              Due <span className="font-semibold text-warn">{formatDay(deadline.nextDueAt)}</span>
+                            </>
+                          )
+                        ) : (
+                          <>
+                            Due since <span className="font-semibold text-bad">{formatDay(deadline.dueAt)}</span>
+                          </>
                         )}
-                      >
-                        {deadline.dueAt === null
-                          ? deadline.nextDueAt === null
-                            ? 'No date'
-                            : `Due ${formatDay(deadline.nextDueAt)}`
-                          : `Due since ${formatDay(deadline.dueAt)}`}
-                        {deadline.dueAt !== null && deadline.nextDueAt !== null
-                          ? ` · next ${formatDay(deadline.nextDueAt)}`
-                          : ''}
+                        {deadline.dueAt !== null && deadline.nextDueAt !== null ? (
+                          <>
+                            {' · next '}
+                            <span className="font-semibold text-warn">{formatDay(deadline.nextDueAt)}</span>
+                          </>
+                        ) : null}
                       </p>
                     </div>
                     <Button
