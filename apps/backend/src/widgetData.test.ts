@@ -501,10 +501,19 @@ test('the target mark sits ahead of the fill by exactly the overdue work', () =>
   // front of it. The first version divided due deadlines by activity count and put the
   // mark at 10% — behind the fill, for someone who had missed three deadlines.
   assert.equal(targetPercent(facts, 12, 40), 37.5);
-  // Nothing overdue: the mark would land exactly on the end of the fill and say nothing.
+  // Nothing overdue and nothing early: the mark would land exactly on the end of the fill
+  // and say nothing.
   assert.equal(targetPercent({ ...facts, overdue: 0 }, 12, 40), null);
   // It can never point past a full ring.
   assert.equal(targetPercent(facts, 39, 40), 100);
+
+  // Ahead of schedule is the same measurement read the other way: two activities finished
+  // before their date puts the mark two behind the fill, at 25% against a 30% fill.
+  assert.equal(targetPercent({ ...facts, overdue: 0, earlyDone: 2 }, 12, 40), 25);
+  // Missing as much as they finished early is being exactly on schedule.
+  assert.equal(targetPercent({ ...facts, overdue: 2, earlyDone: 2 }, 12, 40), null);
+  // And it can never point behind the start of the ring.
+  assert.equal(targetPercent({ ...facts, overdue: 0, earlyDone: 9 }, 4, 40), 0);
 });
 
 test('ring tiles sort by the chosen key, then by completion, then by name', () => {

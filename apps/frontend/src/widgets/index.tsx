@@ -18,6 +18,7 @@ import type {
 import {
   Award,
   BookOpen,
+  Check,
   CircleDashed,
   LineChart,
   Medal,
@@ -1002,16 +1003,13 @@ function arcPath(cx: number, cy: number, r: number, from: number, to: number): s
  * target that projected deadline compliance onto the completion axis, which is not a
  * scale anything can be ahead on — with per-activity dates there is no pace to beat.
  * What remains is true and checkable: work finished before its date came round.
+ *
+ * Ahead of time gets the same weight on the tile as overdue does — a chip rather than a
+ * bare grey line — because the two are the same measurement in opposite directions, and
+ * only one of them being worth looking at is a claim about the students, not the data.
  */
-function ringStatus(entry: CompletionRingsEntry): { text: string; className: string } | null {
-  if (entry.overdue > 0) return null; // the list renders instead
-  if (entry.earlyDone > 0) {
-    return {
-      text: `${entry.earlyDone} done ahead of time`,
-      className: 'text-good',
-    };
-  }
-  return { text: 'On track', className: 'text-muted' };
+function earlyLabel(earlyDone: number): string {
+  return `${earlyDone} ${earlyDone === 1 ? 'activity' : 'activities'} completed ahead of time`;
 }
 
 /**
@@ -1099,7 +1097,6 @@ function PersonRing({
     ...new Set(entry.segments.flatMap((segment) => segment.overdueActivities)),
   ];
   const avatar = entry.user.avatarUrl ? assetUrl(entry.user.avatarUrl) : null;
-  const status = ringStatus(entry);
 
   // Percentages live in the middle of the ring — unless a face is sitting there, in
   // which case they move to the rows underneath and nothing is lost.
@@ -1153,12 +1150,13 @@ function PersonRing({
                     {`${segment.title}: ${Math.round(segment.percent ?? 0)}%`}
                     {segment.targetPercent === null
                       ? ''
-                      : ` (target ${Math.round(segment.targetPercent)}%)`}
+                      : ` (on schedule: ${Math.round(segment.targetPercent)}%)`}
                     {segment.overdue > 0 ? ` — ${overdueLabel(segment.overdue)}` : ''}
                   </title>
                 </path>
               ) : null}
-              {/* Where the deadlines say this person should be by today. */}
+              {/* Where the deadlines say this person should be by today: ahead of the
+                  fill when work is owed, behind it when work was finished early. */}
               {options.showTarget && targetAngle !== null ? (
                 <line
                   x1={center + (radius - stroke / 2) * Math.sin(targetAngle)}
@@ -1238,8 +1236,6 @@ function PersonRing({
           {entry.user.fullname}
         </p>
       )}
-      {/* Always rendered, blank when there is nothing to say: a status line that appears
-          on some tiles and not others shifts everything below it out of alignment. */}
       {entry.overdue > 0 ? (
         <div className="w-full text-left text-[11px] text-bad">
           <p className="font-medium">Overdue:</p>
@@ -1251,10 +1247,15 @@ function PersonRing({
             ))}
           </ul>
         </div>
-      ) : (
-        <p className={cn('text-[11px]', status?.className ?? 'text-muted')}>
-          {status?.text ?? '\u00a0'}
+      ) : entry.earlyDone > 0 ? (
+        <p className="inline-flex max-w-full items-center gap-1 rounded-full bg-good/12 px-2 py-0.5 text-[11px] font-medium text-good">
+          <Check className="h-3 w-3 shrink-0" />
+          <span className="truncate">{earlyLabel(entry.earlyDone)}</span>
         </p>
+      ) : (
+        // Blank rather than absent: a status line that appears on some tiles and not
+        // others shifts everything below it out of alignment across the grid.
+        <p className="text-[11px] text-muted">On track</p>
       )}
       {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} rows={rows} /> : null}
       {options.showBadges ? (

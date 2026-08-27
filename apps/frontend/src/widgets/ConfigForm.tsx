@@ -941,10 +941,13 @@ export function WidgetConfigForm({
           </div>
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor={id('showTarget')} className="mb-0">
-              Show the target mark
+              Show the schedule mark
               <span className="mt-0.5 block text-xs font-normal text-muted">
-                A tick inside each segment for how far the person should be by today,
-                from the Tasks page. Nothing is drawn for a course with no tasks.
+                A tick inside each segment for how far the person would be if they had
+                done exactly the work whose date has come round — ahead of the fill when
+                something is overdue, behind it when something was finished early.
+                Nothing is drawn for a course with no tasks, or for someone exactly on
+                schedule.
               </span>
             </Label>
             <Switch

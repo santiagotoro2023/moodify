@@ -357,26 +357,29 @@ async function loadDeadlineFacts(
 }
 
 /**
- * Where the fill would reach if nothing were overdue: everything already done, plus the
- * work whose date has passed. The gap between the fill and this mark is exactly the
- * missing work, which is the only thing the mark is there to show.
+ * Where the fill would be if this person had done exactly the work whose date has come
+ * round: what they have completed, plus what they have missed, minus what they finished
+ * before it was due. The gap between the fill and this mark is the whole story, and it
+ * reads in both directions — the mark ahead of the fill is work owed, the mark behind it
+ * is work done early.
  *
  * The first version divided the *due deadlines* by the course's activity count, so one
  * task among forty activities put the mark at 2.5% — at the very start of the segment,
  * behind the fill, for someone who had missed it. Completion and deadline compliance are
  * different axes; projecting one onto the other produced a number that meant nothing.
  *
- * Null when nothing is overdue: the mark would sit exactly on the end of the fill and
- * say nothing.
+ * Null when the two coincide: a mark drawn on the end of the fill says nothing, and that
+ * is the ordinary case of somebody exactly on schedule.
  */
 export function targetPercent(
   facts: DeadlineFacts,
   activitiesCompleted: number,
   activitiesTotal: number,
 ): number | null {
-  if (facts.overdue === 0 || activitiesTotal === 0) return null;
-  const reachable = Math.min(activitiesCompleted + facts.overdue, activitiesTotal);
-  return Math.round((reachable / activitiesTotal) * 10000) / 100;
+  const shift = facts.overdue - facts.earlyDone;
+  if (shift === 0 || activitiesTotal === 0) return null;
+  const scheduled = Math.min(Math.max(activitiesCompleted + shift, 0), activitiesTotal);
+  return Math.round((scheduled / activitiesTotal) * 10000) / 100;
 }
 
 async function findCourse(courseId: number): Promise<Course | null> {

@@ -164,6 +164,14 @@ transcription error waiting to happen. Position is recorded during the same walk
 where an activity sits. Rows written before this fall back to name order until the next full
 discovery.
 
+**The schedule mark reads in both directions.** The white tick inside a ring segment is where the
+fill would be if that person had done exactly the work whose date has come round: completed, plus
+what is overdue, minus what was finished before it was due. Ahead of the fill means work is owed;
+behind it means work was done early. It is drawn only when the two differ, since a tick on the end
+of the fill is what being on schedule looks like and says nothing. Ahead of time gets a chip on the
+tile with the same weight the overdue list has — the two are one measurement read in opposite
+directions, and showing only the bad half is a claim about the students rather than the data.
+
 **Unconfigured widgets.** A widget is created with nothing selected and reports what it still
 needs. Requiring a course before a widget could be added made three of the five impossible to add
 at all.
