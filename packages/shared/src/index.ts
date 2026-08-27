@@ -638,8 +638,14 @@ export interface WidgetDataError {
 // Email notifications
 // ---------------------------------------------------------------------------
 
-/** Placeholders a rule's subject and body may use. Anything else is left as typed. */
-export const TEMPLATE_FIELDS = ['name', 'activity', 'course', 'due', 'days'] as const;
+/**
+ * Placeholders a rule's subject and body may use. Anything else is left as typed.
+ *
+ * `{is}` exists because one placeholder cannot agree with its own verb: `{activity}` is
+ * "ISO/OSI" for one activity and "7 activities" for seven, and "7 activities is due"
+ * reads as a bug in the software. Written as "{activity} {is} due", both are right.
+ */
+export const TEMPLATE_FIELDS = ['name', 'activity', 'course', 'due', 'days', 'count', 'is'] as const;
 
 export interface SmtpState {
   enabled: boolean;
@@ -666,7 +672,6 @@ export interface SmtpState {
   mailFontSize: number;
   mailTextColor: string;
   mailAccentColor: string;
-  mailShowLogo: boolean;
   lastSentAt: string | null;
   lastError: string | null;
   /** Students Moodle gave no address for; they are skipped rather than guessed at. */

@@ -179,6 +179,10 @@ export function planNotifications(
     const shared = {
       due: formatDay(group.dueAt),
       days: String(Math.max(0, daysBetween(now, group.dueAt))),
+      count: String(items.length),
+      // See TEMPLATE_FIELDS: {activity} is a name or a count, and only the template
+      // author can put the verb in the right place, so they get the verb too.
+      is: items.length === 1 ? 'is' : 'are',
     };
 
     // Two renders of one template rather than two templates: an admin will preview the

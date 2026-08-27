@@ -1,7 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MAIL_FONTS, TEMPLATE_FIELDS, type NotificationRuleDto, type SmtpState } from '@moodify/shared';
-import { Mail, Plus, Trash2 } from 'lucide-react';
+import {
+  Bold,
+  Eraser,
+  Image as ImageIcon,
+  Italic,
+  Link2,
+  List,
+  Mail,
+  Plus,
+  Trash2,
+  Underline,
+} from 'lucide-react';
 import { api, cn, errorMessage, relativeTime } from '@/lib/api';
+import type { ReactNode } from 'react';
 import { Button, Card, ErrorNote, Input, Label, Select, Spinner, Switch } from '@/ui';
 
 /**
@@ -18,10 +30,152 @@ import { Button, Card, ErrorNote, Input, Label, Select, Spinner, Switch } from '
 const BLANK_RULE = {
   kind: 'before' as const,
   daysBefore: 5,
-  subject: 'Reminder: {activity} is due on {due}',
-  body: 'Hi {name},\n\nThis is due on {due}, in {days} day(s):\n\n{activity}\n\n— Moodify',
+  subject: 'Reminder: {activity} {is} due on {due}',
+  body: '<p>Hi {name},</p><p>This {is} due on {due}, in {days} day(s):</p>{activity}',
   enabled: true,
 };
+
+/** execCommand sizes are 1-7, and only 7 values exist however the UI dresses them up. */
+const TEXT_SIZES = [
+  { value: '2', label: 'Small' },
+  { value: '3', label: 'Normal' },
+  { value: '5', label: 'Large' },
+  { value: '6', label: 'Huge' },
+];
+
+/**
+ * The message editor.
+ *
+ * `contentEditable` and `document.execCommand`. The API is deprecated, has been for a
+ * decade, and every browser still implements it — which makes it a hundred lines against
+ * the several hundred kilobytes of an editor framework, for a box that five people will
+ * ever type into. If it is ever actually removed, the body is plain HTML either way and
+ * a replacement drops in behind the same two props.
+ *
+ * Images upload immediately and are referenced by their Moodify URL, which is what lets
+ * the editor show them. They are turned into attachments when the mail goes out, so none
+ * of this needs Moodify to be reachable from the internet.
+ */
+function RichText({ value, onChange }: { value: string; onChange: (html: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const file = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Uncontrolled on purpose: writing innerHTML on every keystroke puts the caret back at
+  // the start of the box. Only an edit from somewhere else is written in.
+  useEffect(() => {
+    const node = ref.current;
+    if (node !== null && node.innerHTML !== value) node.innerHTML = value;
+  }, [value]);
+
+  const emit = () => onChange(ref.current?.innerHTML ?? '');
+  const exec = (command: string, arg?: string) => {
+    ref.current?.focus();
+    // Styles rather than <font> tags: a mail client handles an inline style everywhere
+    // and <font size> in about half the places.
+    document.execCommand('styleWithCSS', false, 'true');
+    document.execCommand(command, false, arg);
+    emit();
+  };
+
+  const addImage = async (chosen: File) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { url } = await api.upload<{ url: string }>('/api/notifications/images', chosen);
+      exec('insertHTML', `<img src="${url}" alt="" style="max-width:100%;height:auto" />`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tool = (label: string, icon: ReactNode, onClick: () => void) => (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      // onMouseDown, not onClick: clicking a button blurs the box first, and a lost
+      // selection means the command has nothing to apply itself to.
+      onMouseDown={(event) => {
+        event.preventDefault();
+        onClick();
+      }}
+      className="rounded-lg p-1.5 text-muted transition hover:bg-white/8 hover:text-ink"
+    >
+      {icon}
+    </button>
+  );
+
+  return (
+    <div className="rounded-xl border border-edge bg-ground-soft">
+      <div className="flex flex-wrap items-center gap-1 border-b border-edge px-2 py-1.5">
+        {tool('Bold', <Bold className="h-4 w-4" />, () => exec('bold'))}
+        {tool('Italic', <Italic className="h-4 w-4" />, () => exec('italic'))}
+        {tool('Underline', <Underline className="h-4 w-4" />, () => exec('underline'))}
+        {tool('Bullet list', <List className="h-4 w-4" />, () => exec('insertUnorderedList'))}
+        {tool('Link', <Link2 className="h-4 w-4" />, () => {
+          const href = prompt('Link address');
+          if (href) exec('createLink', href);
+        })}
+        {tool('Image', <ImageIcon className="h-4 w-4" />, () => file.current?.click())}
+        {tool('Clear formatting', <Eraser className="h-4 w-4" />, () => exec('removeFormat'))}
+
+        <select
+          aria-label="Text size"
+          defaultValue=""
+          onChange={(e) => {
+            exec('fontSize', e.target.value);
+            e.target.value = '';
+          }}
+          className="ml-1 rounded-lg bg-transparent px-1 py-0.5 text-xs text-muted outline-none"
+        >
+          <option value="" disabled>
+            Size
+          </option>
+          {TEXT_SIZES.map((size) => (
+            <option key={size.value} value={size.value}>
+              {size.label}
+            </option>
+          ))}
+        </select>
+
+        <input
+          type="color"
+          aria-label="Text colour"
+          defaultValue="#1f2933"
+          onChange={(e) => exec('foreColor', e.target.value)}
+          className="h-6 w-8 cursor-pointer rounded border border-edge bg-transparent p-0.5"
+        />
+
+        {busy ? <Spinner className="h-4 w-4" /> : null}
+        <input
+          ref={file}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const chosen = e.target.files?.[0];
+            e.target.value = '';
+            if (chosen) void addImage(chosen);
+          }}
+        />
+      </div>
+
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={emit}
+        onBlur={emit}
+        className="min-h-40 px-3 py-2 text-sm outline-none [&_a]:text-accent [&_a]:underline [&_img]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
+      />
+      {error ? <p className="border-t border-edge px-3 py-2 text-xs text-bad">{error}</p> : null}
+    </div>
+  );
+}
 
 function RuleEditor({
   rule,
@@ -86,17 +240,13 @@ function RuleEditor({
       </div>
       <div>
         <Label>Message</Label>
-        <textarea
-          value={body}
-          rows={7}
-          onChange={(e) => setBody(e.target.value)}
-          className="w-full rounded-xl border border-edge bg-ground-soft px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent"
-        />
+        <RichText value={body} onChange={setBody} />
         <p className="mt-1 text-xs text-muted">
           Placeholders: {TEMPLATE_FIELDS.map((field) => `{${field}}`).join(', ')}. When one
           message covers several activities, <code>{'{activity}'}</code> becomes a list and
-          the subject says how many; each entry links to the activity in Moodle. HTML is
-          allowed here and the subject is stripped back to text.
+          the subject says how many, so write <code>{'{activity} {is} due'}</code> rather
+          than <code>{'{activity} is due'}</code>. Each entry links to the activity in
+          Moodle, and images you add travel with the message as attachments.
         </p>
       </div>
 
@@ -647,19 +797,6 @@ export function NotificationsCard() {
             label="Link colour"
             value={smtp.mailAccentColor}
             onCommit={(value) => void patch({ mailAccentColor: value })}
-          />
-        </div>
-        <div className="flex items-center justify-between gap-4">
-          <Label className="mb-0">
-            Logo at the top
-            <span className="mt-0.5 block text-xs font-normal text-muted">
-              Uses the logo from Settings. Needs the public address set under Sharing —
-              a mail client cannot fetch a relative image, and shows a broken box instead.
-            </span>
-          </Label>
-          <Switch
-            checked={smtp.mailShowLogo}
-            onCheckedChange={(v) => void patch({ mailShowLogo: v })}
           />
         </div>
       </div>

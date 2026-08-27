@@ -1,5 +1,8 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { mailFontStack } from '@moodify/shared';
+import { ASSETS_DIR } from './config.ts';
 import { decryptSecret, encryptSecret } from './crypto.ts';
 import { sql } from './db.ts';
 
@@ -37,7 +40,6 @@ export interface SmtpConfig {
   mailFontSize: number;
   mailTextColor: string;
   mailAccentColor: string;
-  mailShowLogo: boolean;
   lastReportOn: Date | null;
 }
 
@@ -63,7 +65,6 @@ type SmtpRow = {
   mail_font_size: number;
   mail_text_color: string;
   mail_accent_color: string;
-  mail_show_logo: boolean;
   last_report_on: Date | null;
 };
 
@@ -73,7 +74,7 @@ export async function loadSmtpConfig(): Promise<SmtpConfig | null> {
     `select enabled, transport, graph_tenant_id, graph_client_id, graph_account,
             graph_refresh_token_encrypted, host, port, secure, username, password_encrypted,
             from_name, from_email, admin_email, daily_report, daily_report_hour, send_hour, mail_font, mail_font_size,
-            mail_text_color, mail_accent_color, mail_show_logo, last_report_on
+            mail_text_color, mail_accent_color, last_report_on
        from smtp_settings order by id limit 1`,
   );
   const row = rows[0];
@@ -112,7 +113,6 @@ export async function loadSmtpConfig(): Promise<SmtpConfig | null> {
     mailFontSize: row.mail_font_size,
     mailTextColor: row.mail_text_color,
     mailAccentColor: row.mail_accent_color,
-    mailShowLogo: row.mail_show_logo,
     lastReportOn: row.last_report_on,
   };
 }
@@ -234,6 +234,9 @@ async function graphAccessToken(config: SmtpConfig): Promise<string> {
   return tokens.accessToken;
 }
 
+/** A Mail with its images resolved — internal, so no caller has to think about them. */
+type Dressed = Mail & { images: InlineImage[] };
+
 export interface Mail {
   to: string;
   subject: string;
@@ -275,44 +278,82 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
-/** The logo to put at the top, absolute — a relative src is a broken box in every inbox. */
-async function mailLogoUrl(): Promise<string | null> {
-  const { rows } = await sql<{ key: string; value: string }>(
-    "select key, value from app_settings where key in ('custom_logo_path', 'public_base_url')",
-  );
-  const byKey = new Map(rows.map((row) => [row.key, row.value]));
-  const base = (byKey.get('public_base_url') ?? '').trim().replace(/\/+$/, '');
-  if (base === '') return null;
-  const stored = (byKey.get('custom_logo_path') ?? '').trim();
-  return `${base}/${stored === '' ? 'brand/moodify-logo.svg' : `assets/${stored}`}`;
+/** An uploaded image that travels with the message instead of being fetched from a URL. */
+export interface InlineImage {
+  cid: string;
+  /** Path relative to ASSETS_DIR. Only ever produced by the pattern below. */
+  path: string;
 }
+
+/**
+ * Turns every uploaded image in the body into an attachment the message carries itself.
+ *
+ * A remote <img src> needs a publicly reachable Moodify, which a self-hosted install
+ * behind a LAN or a VPN simply does not have — and even with one, most clients block
+ * remote images until the reader clicks "show pictures". An embedded attachment has
+ * neither problem, so this is the only way images are supported.
+ *
+ * The pattern is deliberately narrow: the uploads directory, and a generated filename of
+ * exactly the characters saveImageUpload produces. Anything else in a src is left alone,
+ * which is what keeps a hand-written path from reaching the filesystem.
+ */
+export function inlineImages(html: string): { html: string; images: InlineImage[] } {
+  const images = new Map<string, InlineImage>();
+  const out = html.replace(
+    /src="[^"]*\/assets-store\/(uploads\/[A-Za-z0-9]+\.[a-z]{3,4})"/g,
+    (_match, relative: string) => {
+      const cid = relative.replace(/[^A-Za-z0-9]/g, '');
+      images.set(cid, { cid, path: relative });
+      return `src="cid:${cid}"`;
+    },
+  );
+  return { html: out, images: [...images.values()] };
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+};
+
+export const mimeForPath = (path: string): string =>
+  MIME_BY_EXT[path.split('.').pop() ?? ''] ?? 'application/octet-stream';
 
 /**
  * Wraps a body fragment in the configured look.
  *
  * Inline styles on every element, and a table-free single column: mail clients strip
  * <style> blocks, ignore stylesheets, and Outlook re-flows anything clever. The shell is
- * deliberately plain so the admin's own HTML in the body decides everything else.
+ * deliberately plain so the admin's own HTML in the body decides everything else — there
+ * is no footer, no logo and no signature here, because every one of those is something
+ * the admin can put in the template and then cannot take out again.
  */
-export function wrapHtmlMail(config: SmtpConfig, body: string, logoUrl: string | null): string {
+export function wrapHtmlMail(config: SmtpConfig, body: string): string {
   const font = mailFontStack(config.mailFont);
-  const header =
-    logoUrl === null
-      ? ''
-      : `<img src="${escapeHtml(logoUrl)}" alt="" style="height:32px;width:auto;display:block;margin:0 0 20px" />`;
   return [
     `<div style="margin:0;padding:24px;background:#f5f7fa">`,
     `<div style="max-width:600px;margin:0 auto;padding:28px;background:#ffffff;border-radius:14px;`,
     `font-family:${font};font-size:${config.mailFontSize}px;line-height:1.55;color:${config.mailTextColor}">`,
-    header,
     // A mail client applies its own blue to any <a> that does not say otherwise, and it
     // will not read a <style> block to find out. Only links that carry no style of their
     // own are touched, so an admin who styled one in the body keeps it.
     `<div>${body.replace(/<a\s+(?![^>]*\bstyle=)/gi, `<a style="color:${config.mailAccentColor}" `)}</div>`,
-    `<hr style="border:none;border-top:1px solid #e3e8ee;margin:24px 0 12px" />`,
-    `<p style="margin:0;font-size:12px;color:#7b8794">Sent by Moodify</p>`,
     `</div></div>`,
   ].join('');
+}
+
+/**
+ * A newline in the body becomes a line break, unless it sits straight after a tag.
+ *
+ * Once the body is HTML, a bare \n renders as a single space and a message written as
+ * three paragraphs arrives as one — the first thing anybody notices. The exception is
+ * what keeps it from doubling up: a newline following `>` is the source being laid out
+ * readably, not a break the writer asked for.
+ */
+export function newlinesToBreaks(html: string): string {
+  return html.replace(/(?<!>)\n/g, '<br>');
 }
 
 function describeSendError(err: unknown): string {
@@ -321,7 +362,7 @@ function describeSendError(err: unknown): string {
 
 async function sendViaGraph(
   config: SmtpConfig,
-  mails: readonly Mail[],
+  mails: readonly Dressed[],
 ): Promise<{ sent: number; failed: number; error: string | null }> {
   let accessToken: string;
   try {
@@ -352,6 +393,18 @@ async function sendViaGraph(
                 ? { contentType: 'Text', content: mail.text }
                 : { contentType: 'HTML', content: mail.html },
             toRecipients: [{ emailAddress: { address: mail.to } }],
+            attachments: await Promise.all(
+              mail.images.map(async (image) => ({
+                '@odata.type': '#microsoft.graph.fileAttachment',
+                name: image.path.split('/').pop(),
+                contentType: mimeForPath(image.path),
+                contentBytes: (await readFile(join(ASSETS_DIR, image.path))).toString('base64'),
+                // isInline plus contentId is what makes cid: resolve rather than the
+                // image arriving as a separate download at the bottom.
+                isInline: true,
+                contentId: image.cid,
+              })),
+            ),
           },
           saveToSentItems: false,
         }),
@@ -380,14 +433,13 @@ export async function sendMails(
 ): Promise<{ sent: number; failed: number; error: string | null }> {
   if (mails.length === 0) return { sent: 0, failed: 0, error: null };
 
-  // Styling is applied here, once, rather than by every caller: the shell depends on
-  // settings the callers have no reason to load.
-  const logoUrl = mails.some((mail) => mail.html !== undefined) && config.mailShowLogo
-    ? await mailLogoUrl()
-    : null;
-  const dressed = mails.map((mail) =>
-    mail.html === undefined ? mail : { ...mail, html: wrapHtmlMail(config, mail.html, logoUrl) },
-  );
+  // Styling, line breaks and image embedding are applied here, once, rather than by
+  // every caller: they depend on settings the callers have no reason to load.
+  const dressed: Dressed[] = mails.map((mail) => {
+    if (mail.html === undefined) return { ...mail, images: [] };
+    const embedded = inlineImages(wrapHtmlMail(config, newlinesToBreaks(mail.html)));
+    return { ...mail, html: embedded.html, images: embedded.images };
+  });
 
   const result = config.transport === 'graph'
     ? await sendViaGraph(config, dressed)
@@ -405,7 +457,7 @@ export async function sendMails(
 
 async function sendViaSmtp(
   config: SmtpConfig,
-  mails: readonly Mail[],
+  mails: readonly Dressed[],
 ): Promise<{ sent: number; failed: number; error: string | null }> {
   const transport = transportFor(config);
   const from = `${config.fromName} <${config.fromEmail}>`;
@@ -421,6 +473,11 @@ async function sendViaSmtp(
         subject: mail.subject,
         text: mail.text,
         ...(mail.html === undefined ? {} : { html: mail.html }),
+        attachments: mail.images.map((image) => ({
+          filename: image.path.split('/').pop(),
+          path: join(ASSETS_DIR, image.path),
+          cid: image.cid,
+        })),
       });
       sent += 1;
     } catch (err) {

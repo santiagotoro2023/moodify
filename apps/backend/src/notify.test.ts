@@ -149,6 +149,21 @@ test('everything overdue reaches one person in one mail, oldest first', () => {
   assert.equal(rest[0]?.subject, 'Overdue: Subnetting');
 });
 
+test('one activity or seven, the sentence agrees with itself', () => {
+  const rule: NotificationRule = { ...BEFORE, subject: '{count}: {activity} {is} due' };
+  const [one] = planNotifications([rule], [candidate()], new Set(), NOW);
+  assert.equal(one?.subject, '1: ISO/OSI is due');
+
+  const [many] = planNotifications(
+    [rule],
+    [candidate(), candidate({ deadlineId: 2, activityName: 'Subnetting' })],
+    new Set(),
+    NOW,
+  );
+  // "2 activities is due" is what a single placeholder cannot avoid on its own.
+  assert.equal(many?.subject, '2: 2 activities are due');
+});
+
 test('the mail links to Moodle in HTML and spells the URL out in the fallback', () => {
   const [mail] = planNotifications([BEFORE], [candidate()], new Set(), NOW);
   // The HTML body is what nearly everyone sees, and a name they can click beats a name

@@ -12,7 +12,7 @@ import {
   type NotificationRuleDto,
   type TaskRecipient,
 } from '@moodify/shared';
-import { CalendarClock, Send, Trash2 } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Send, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
 import { Button, Card, Dialog, EmptyState, ErrorNote, Label, Select, Spinner } from '@/ui';
 
@@ -79,6 +79,146 @@ const groupByCourseSection = (deadlines: readonly Deadline[]) =>
  * at the top on its own, without a second comparator to say so. A task whose one-off date
  * has gone and will not come round again sorts last rather than first.
  */
+/** yyyy-mm-dd in local time. Date#toISOString would shift a late-evening date a day. */
+function dayKey(date: Date): string {
+  return `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, '0')}-${`${date.getDate()}`.padStart(2, '0')}`;
+}
+
+/**
+ * The days a month grid shows: the month itself, padded out to whole Monday-start weeks.
+ *
+ * Six rows only when the month needs six, so February does not leave a blank strip.
+ */
+function monthGrid(month: Date): Date[] {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const lead = (first.getDay() + 6) % 7;
+  const days = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const cells = Math.ceil((lead + days) / 7) * 7;
+  return Array.from(
+    { length: cells },
+    (_, index) => new Date(first.getFullYear(), first.getMonth(), 1 - lead + index),
+  );
+}
+
+/**
+ * Which days have something due.
+ *
+ * Both occurrences of a yearly task are placed — the one in force and the next one —
+ * because a calendar that only ever shows the current one cannot answer "when does this
+ * come round again", which is the question a yearly task exists to raise.
+ */
+function occurrencesByDay(deadlines: readonly Deadline[]): Map<string, Deadline[]> {
+  const byDay = new Map<string, Deadline[]>();
+  for (const deadline of deadlines) {
+    for (const iso of new Set([deadline.dueAt, deadline.nextDueAt])) {
+      if (iso === null) continue;
+      const key = dayKey(new Date(iso));
+      const day = byDay.get(key);
+      if (day === undefined) byDay.set(key, [deadline]);
+      else day.push(deadline);
+    }
+  }
+  return byDay;
+}
+
+const WEEKDAY_HEADS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+
+/**
+ * The month view.
+ *
+ * A list of thirty tasks answers "what exists"; nobody reads it to answer "what is
+ * happening next week", which is the question that actually gets asked. Colour carries
+ * the whole signal — a day either has work due or it does not — and the detail is one
+ * hover away rather than on screen for every day at once.
+ */
+function MonthView({
+  deadlines,
+  month,
+  onMonth,
+}: {
+  deadlines: readonly Deadline[];
+  month: Date;
+  onMonth: (month: Date) => void;
+}) {
+  const byDay = occurrencesByDay(deadlines);
+  const today = dayKey(new Date());
+  const shift = (by: number) => onMonth(new Date(month.getFullYear(), month.getMonth() + by, 1));
+
+  return (
+    <Card className="space-y-3">
+      <div className="flex items-center gap-2">
+        <h2 className="flex-1 font-medium">
+          {MONTH_NAMES[month.getMonth()]} {month.getFullYear()}
+        </h2>
+        <Button variant="ghost" size="icon" aria-label="Previous month" onClick={() => shift(-1)}>
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <Button variant="subtle" size="sm" onClick={() => onMonth(new Date())}>
+          Today
+        </Button>
+        <Button variant="ghost" size="icon" aria-label="Next month" onClick={() => shift(1)}>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-7 gap-1.5 text-center text-[11px] text-muted">
+        {WEEKDAY_HEADS.map((head) => (
+          <div key={head}>{head}</div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 gap-1.5">
+        {monthGrid(month).map((day) => {
+          const key = dayKey(day);
+          const items = byDay.get(key) ?? [];
+          const outside = day.getMonth() !== month.getMonth();
+          return (
+            <div
+              key={key}
+              className={cn(
+                'group relative aspect-square rounded-xl border p-1.5 text-left transition',
+                items.length > 0
+                  ? 'border-accent/60 bg-accent/25 hover:bg-accent/35'
+                  : 'border-edge/50 bg-white/[0.03]',
+                outside && 'opacity-40',
+                // The outline, not a fill: today has to stay readable whether or not it
+                // also has work due, and a second fill colour would fight the first.
+                key === today && 'ring-2 ring-ink/80',
+              )}
+            >
+              <span className={cn('text-xs tabular-nums', items.length > 0 ? 'font-semibold' : 'text-muted')}>
+                {day.getDate()}
+              </span>
+              {items.length > 0 ? (
+                <span className="absolute bottom-1.5 right-1.5 text-[10px] font-medium tabular-nums text-ink/80">
+                  {items.length}
+                </span>
+              ) : null}
+
+              {items.length > 0 ? (
+                <div className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden w-56 -translate-x-1/2 rounded-xl border border-edge bg-ground-soft p-2 text-left text-xs shadow-lg group-hover:block">
+                  <p className="mb-1 font-medium">{formatDay(day)}</p>
+                  <ul className="space-y-1">
+                    {items.map((deadline) => (
+                      <li key={`${deadline.id}-${key}`}>
+                        <span className="block truncate font-medium">{deadline.activityName}</span>
+                        <span className="block truncate text-muted">
+                          {deadline.courseName} · {deadline.cohortName ?? 'Everyone'}
+                          {deadline.date === null ? ' · yearly' : ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function dueKey(deadline: Deadline): number {
   const at = deadline.dueAt ?? deadline.nextDueAt;
   return at === null ? Number.POSITIVE_INFINITY : new Date(at).getTime();
@@ -241,6 +381,8 @@ export default function Tasks() {
   /** '' = everything, 'everyone' = the course-wide tasks, otherwise a cohort id. */
   const [byCohort, setByCohort] = useState('');
   const [sortBy, setSortBy] = useState<'moodle' | 'due'>('moodle');
+  const [view, setView] = useState<'calendar' | 'list'>('calendar');
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
 
   const [courseId, setCourseId] = useState('');
   const [cmid, setCmid] = useState('');
@@ -507,8 +649,31 @@ export default function Tasks() {
       {/* Filters sit over the list, not over the page: they say nothing about the form
           beside them, and a control that looks like it applies to both is worse than no
           control. Hidden until there is more than a handful to sift through. */}
+      <div className="flex gap-2">
+        {(
+          [
+            ['calendar', 'Calendar'],
+            ['list', 'List'],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setView(value)}
+            className={cn(
+              'rounded-xl border px-3 py-1.5 text-sm transition',
+              view === value
+                ? 'border-accent bg-accent/15 text-ink'
+                : 'border-edge text-muted hover:text-ink',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {deadlines !== null && deadlines.length > 3 ? (
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className={cn('grid gap-2', view === 'list' ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
           <Select
             aria-label="Filter by course"
             value={byCourse}
@@ -534,14 +699,17 @@ export default function Tasks() {
               </option>
             ))}
           </Select>
-          <Select
-            aria-label="Sort tasks"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value === 'due' ? 'due' : 'moodle')}
-          >
-            <option value="moodle">Moodle order</option>
-            <option value="due">Soonest due first</option>
-          </Select>
+          {/* Sorting is a property of a list. The calendar is already in date order. */}
+          {view === 'list' ? (
+            <Select
+              aria-label="Sort tasks"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value === 'due' ? 'due' : 'moodle')}
+            >
+              <option value="moodle">Moodle order</option>
+              <option value="due">Soonest due first</option>
+            </Select>
+          ) : null}
         </div>
       ) : null}
 
@@ -555,6 +723,8 @@ export default function Tasks() {
           title="No tasks yet"
           hint="Nothing is being tracked against a date, so nothing can be overdue."
         />
+      ) : view === 'calendar' ? (
+        <MonthView deadlines={shown} month={calendarMonth} onMonth={setCalendarMonth} />
       ) : shown.length === 0 ? (
         <EmptyState
           icon={<CalendarClock className="h-6 w-6" />}
@@ -577,10 +747,17 @@ export default function Tasks() {
                         {sortBy === 'due' ? `${deadline.courseName} · ` : ''}
                         {deadline.cohortName ?? 'Everyone'} · {describeDeadlineRule(deadline)}
                       </p>
+                      {/* The one line anybody scans for, so it is the one line that is
+                          not grey: amber for what is coming, red for what has been
+                          missed. */}
                       <p
                         className={cn(
-                          'text-xs',
-                          deadline.dueAt === null ? 'text-muted' : 'text-warn',
+                          'text-xs font-semibold',
+                          deadline.dueAt !== null
+                            ? 'text-bad'
+                            : deadline.nextDueAt === null
+                              ? 'text-muted'
+                              : 'text-warn',
                         )}
                       >
                         {deadline.dueAt === null

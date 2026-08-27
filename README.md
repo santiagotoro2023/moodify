@@ -162,6 +162,14 @@ long one the full width; Tasks puts the new-task form in a sticky column beside 
 it is the same eight fields whatever the window is and stacking it on top pushed the list — the
 thing you came to look at — below the fold.
 
+**Tasks open on a calendar.** A list answers "what exists"; nobody reads one to answer "what is
+happening next week", which is the question actually being asked. The month grid carries a single
+signal in colour — a day either has work due or it does not — with the detail one hover away rather
+than on screen for every day at once, and today outlined rather than filled so it stays readable
+whether or not it also has work due. Both occurrences of a yearly task are placed, the one in force
+and the next, since a calendar that shows only the current one cannot answer "when does this come
+round again". The list view is still there for a full sweep, and the same filters drive both.
+
 **Filtering tasks.** By course, by who the task applies to, and by date. Sorting by date drops the
 course/section grouping rather than sorting inside it: the whole point is to see what is due next
 across everything, and the heading that carried the course name goes with it, so the card names its
@@ -403,13 +411,29 @@ one that was never configured. Rules are global — "5 days before" is written o
 every task, and several lead-time rules can coexist. The overdue rule fires once per occurrence.
 
 **Reminders are HTML, with a plain-text copy.** Font, text size, text colour and link colour are
-settings; anything more specific is HTML written straight into the rule's own text, which is the
-laziest thing that supports bold, colours and images at once and needs no editor. The body is
-rendered twice from the same template — once with HTML values, once with plain ones — rather than
-kept as two templates, because the copy nobody previews is the copy that rots. Styles are inlined
-on a wrapper at send time: mail clients discard `<style>` blocks, and a link with no inline colour
-gets the client's own blue, so links that carry no style of their own are given the accent colour
-on the way out.
+settings; everything else is written in the message editor, a `contentEditable` box driving
+`document.execCommand`. That API has been deprecated for a decade and every browser still
+implements it, which makes it a hundred lines against the several hundred kilobytes of an editor
+framework, for a box five people will ever type into — and the body is plain HTML either way, so a
+replacement drops in behind the same two props. The body is rendered twice from the same template,
+once with HTML values and once with plain ones, rather than kept as two templates, because the copy
+nobody previews is the copy that rots. Styles are inlined on a wrapper at send time: mail clients
+discard `<style>` blocks, and a link with no inline colour gets the client's own blue, so links
+that carry no style of their own are given the accent colour on the way out. A newline becomes a
+`<br>` unless it follows a tag, where it is source formatting rather than a break somebody asked
+for. There is no footer and no signature: both are things an admin can put in the template and
+then cannot take out again.
+
+**Images travel with the message.** Uploaded into the editor, referenced by their Moodify URL so
+the editor can show them, and rewritten to `cid:` attachments when the mail goes out. A remote
+`<img src>` would need a publicly reachable Moodify, which a self-hosted install behind a LAN or a
+VPN does not have — and even with one, most clients block remote images until the reader clicks
+"show pictures". The rewrite matches only the uploads directory and the exact filename shape
+`saveImageUpload` produces, which is what stops a hand-written path from reaching the filesystem.
+
+**`{is}` and `{count}`.** One placeholder cannot agree with its own verb: `{activity}` is "ISO/OSI"
+for one activity and "7 activities" for seven, and "7 activities is due" reads as a bug in the
+software. Written as `{activity} {is} due`, both are right.
 
 Each activity in a reminder links to `/mod/<modname>/view.php?<cmid>` on the configured Moodle —
 its canonical URL, and the reason `modname` is stored at all. The plain-text copy spells the

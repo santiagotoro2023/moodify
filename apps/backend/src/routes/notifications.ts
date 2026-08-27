@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth.ts';
 import { encryptSecret } from '../crypto.ts';
 import { sql } from '../db.ts';
+import { UploadError, assetUrl, saveImageUpload } from '../uploads.ts';
 import {
   GRAPH_SCOPE,
   GraphError,
@@ -47,7 +48,6 @@ const smtpBodySchema = z.object({
   mailFontSize: z.number().int().min(10).max(28).optional(),
   mailTextColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   mailAccentColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-  mailShowLogo: z.boolean().optional(),
 });
 
 const ruleBodySchema = z
@@ -109,7 +109,6 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       mail_font_size: number;
       mail_text_color: string;
       mail_accent_color: string;
-      mail_show_logo: boolean;
       last_sent_at: Date | null;
       last_error: string | null;
     }>(
@@ -117,7 +116,7 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
               graph_refresh_token_encrypted is not null as connected,
               host, port, secure, username, password_encrypted, from_name, from_email,
               admin_email, daily_report, daily_report_hour, send_hour,
-              mail_font, mail_font_size, mail_text_color, mail_accent_color, mail_show_logo,
+              mail_font, mail_font_size, mail_text_color, mail_accent_color,
               last_sent_at, last_error
          from smtp_settings order by id limit 1`,
     );
@@ -158,7 +157,6 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       mailFontSize: row?.mail_font_size ?? 15,
       mailTextColor: row?.mail_text_color ?? '#1f2933',
       mailAccentColor: row?.mail_accent_color ?? '#2563eb',
-      mailShowLogo: row?.mail_show_logo ?? false,
       lastSentAt: row?.last_sent_at?.toISOString() ?? null,
       lastError: row?.last_error ?? null,
       usersWithoutEmail: missing.map((entry) => entry.fullname),
@@ -200,8 +198,7 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
          mail_font          = coalesce($16, mail_font),
          mail_font_size     = coalesce($17, mail_font_size),
          mail_text_color    = coalesce($18, mail_text_color),
-         mail_accent_color  = coalesce($19, mail_accent_color),
-         mail_show_logo     = coalesce($20, mail_show_logo)`,
+         mail_accent_color  = coalesce($19, mail_accent_color)`,
       [
         body.enabled ?? null,
         body.host ?? null,
@@ -222,7 +219,6 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
         body.mailFontSize ?? null,
         body.mailTextColor ?? null,
         body.mailAccentColor ?? null,
-        body.mailShowLogo ?? null,
       ],
     );
     return { ok: true };
@@ -318,6 +314,22 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
     await storeGraphRefreshToken(null, null);
     await sql(`update smtp_settings set graph_account = null`);
     return { ok: true };
+  });
+
+  /**
+   * An image for the message editor.
+   *
+   * Stored exactly like a logo or a background, and served from the same place, so the
+   * editor can show it straight away. It never has to be publicly reachable: at send time
+   * the src is rewritten to a cid and the file rides along as an attachment.
+   */
+  app.post('/api/notifications/images', auth, async (request, reply) => {
+    try {
+      return { url: assetUrl(await saveImageUpload(await request.file())) };
+    } catch (err) {
+      if (err instanceof UploadError) return reply.code(err.statusCode).send({ error: err.message });
+      throw err;
+    }
   });
 
   app.post('/api/notifications/test', auth, async (request, reply) => {
