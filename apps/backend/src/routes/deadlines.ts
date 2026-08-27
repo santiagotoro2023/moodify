@@ -306,7 +306,7 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
     const candidates = (await loadCandidates()).filter(
       (candidate) => candidate.deadlineId === id.data.id && wanted.has(candidate.userId),
     );
-    const planned = planNotifications([rule], candidates, new Set(), new Date(), true);
+    const planned = planNotifications([rule], candidates, new Set(), new Date(), { force: true });
     const sent = await deliver(config, planned, request.log);
 
     if (sent === 0) {

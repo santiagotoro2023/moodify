@@ -107,15 +107,25 @@ export function planNotifications(
   candidates: readonly Candidate[],
   alreadySent: ReadonlySet<string>,
   now: Date,
-  /**
-   * Drops the two conditions that make this a *scheduled* pass: the rule's window, and
-   * "not already sent". An admin pressing Send on the Tasks page has decided both of
-   * those, and a button that quietly does nothing because the date is three weeks out
-   * would be worse than no button. What it does not drop is completed work and missing
-   * addresses — those are still reasons not to mail somebody.
-   */
-  force = false,
+  options: {
+    /**
+     * Drops the two conditions that make this a *scheduled* pass: the rule's window, and
+     * "not already sent". An admin pressing Send on the Tasks page has decided both of
+     * those, and a button that quietly does nothing because the date is three weeks out
+     * would be worse than no button. What it does not drop is completed work and missing
+     * addresses — those are still reasons not to mail somebody.
+     */
+    force?: boolean;
+    /**
+     * Widens every lead-time rule to at least this many days, without touching the
+     * already-sent check. This is the catch-up: switching mailing on should tell people
+     * about the next week's work even if the only rule configured is "one day before".
+     * {days} still counts the real distance, so a task four days out says four.
+     */
+    horizonDays?: number;
+  } = {},
 ): PlannedMail[] {
+  const { force = false, horizonDays = 0 } = options;
   type Item = { candidate: Candidate; dueAt: Date; dueOn: string };
   type Group = {
     rule: NotificationRule;
@@ -138,7 +148,8 @@ export function planNotifications(
         if (dueAt === null && force) dueAt = deadlineNextDueAt(item.rule, now);
       } else {
         const next = deadlineNextDueAt(item.rule, now);
-        dueAt = next !== null && (force || daysBetween(now, next) <= (rule.daysBefore ?? 0)) ? next : null;
+        const window = Math.max(rule.daysBefore ?? 0, horizonDays);
+        dueAt = next !== null && (force || daysBetween(now, next) <= window) ? next : null;
       }
       if (dueAt === null) continue;
 
@@ -427,6 +438,28 @@ export async function runNotifications(logger: FastifyBaseLogger): Promise<void>
   }
 
   await maybeSendDailyReport(config.adminEmail, config, candidates, now, logger);
+}
+
+/**
+ * Everything owed right now, sent at once, whatever the hour.
+ *
+ * Runs when mailing is switched on. It respects the log, so anyone who already had their
+ * reminder today does not get a second one — the point is to catch up the people the
+ * scheduled pass has no way of reaching any more, not to mail everybody again.
+ */
+export async function runCatchUp(logger: FastifyBaseLogger, horizonDays: number): Promise<number> {
+  const config = await loadSmtpConfig();
+  if (!smtpIsUsable(config) || !config.enabled) return 0;
+
+  const [rules, candidates, alreadySent] = await Promise.all([
+    loadRules(),
+    loadCandidates(),
+    loadSentKeys(),
+  ]);
+  const planned = planNotifications(rules, candidates, alreadySent, new Date(), { horizonDays });
+  const sent = await deliver(config, planned, logger);
+  logger.info({ sent, horizonDays }, 'catch-up reminders sent');
+  return sent;
 }
 
 /**

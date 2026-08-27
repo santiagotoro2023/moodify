@@ -672,6 +672,9 @@ export interface SmtpState {
   mailFontSize: number;
   mailTextColor: string;
   mailAccentColor: string;
+  /** Send everything owed the moment mailing is switched on, rather than at sendHour. */
+  jumpStart: boolean;
+  jumpStartDays: number;
   lastSentAt: string | null;
   lastError: string | null;
   /** Students Moodle gave no address for; they are skipped rather than guessed at. */

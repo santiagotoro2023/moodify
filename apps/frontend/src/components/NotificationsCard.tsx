@@ -575,7 +575,46 @@ export function NotificationsCard() {
             </span>
           ) : null}
         </Label>
-        <Switch checked={smtp.enabled} onCheckedChange={(v) => void patch({ enabled: v })} />
+        <Switch
+          checked={smtp.enabled}
+          onCheckedChange={async (v) => {
+            await patch({ enabled: v });
+            if (v && smtp.jumpStart) {
+              setNote(`Catch-up started — everything due within ${smtp.jumpStartDays} days or already overdue is going out now.`);
+            }
+          }}
+        />
+      </div>
+
+      <div className="grid gap-3 rounded-xl border border-edge bg-ground-soft/60 px-3 py-2.5 sm:grid-cols-[1fr_auto]">
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-progress)]"
+            checked={smtp.jumpStart}
+            onChange={(e) => void patch({ jumpStart: e.target.checked })}
+          />
+          <span>
+            Catch up when switching on
+            <span className="mt-0.5 block text-xs text-muted">
+              The moment the switch above goes on, everyone with work already overdue or
+              falling due within this many days gets their reminder — without waiting for
+              the send hour. Each message still counts the real distance, so something
+              three days out reads as three days. Anyone already mailed today is skipped.
+            </span>
+          </span>
+        </label>
+        <div className="sm:w-24">
+          <Input
+            type="number"
+            min={1}
+            max={60}
+            aria-label="Catch-up window in days"
+            value={String(smtp.jumpStartDays)}
+            onChange={(e) => field('jumpStartDays', Number(e.target.value))}
+            onBlur={() => void patch({ jumpStartDays: smtp.jumpStartDays })}
+          />
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">

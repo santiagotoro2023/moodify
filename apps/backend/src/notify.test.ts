@@ -184,6 +184,25 @@ test('the mail links to Moodle in HTML and spells the URL out in the fallback', 
   assert.match(plain?.html ?? '', /ISO\/OSI/);
 });
 
+test('the catch-up reaches past a rule\'s own window, but not past the log', () => {
+  const oneDay: NotificationRule = { ...BEFORE, daysBefore: 1 };
+  const soon = candidate({ rule: { date: '2026-03-13' } }); // three days out
+
+  // A one-day rule has nothing to say about something three days away...
+  assert.deepEqual(planNotifications([oneDay], [soon], new Set(), NOW), []);
+
+  // ...until the catch-up widens the window to five.
+  const [caught] = planNotifications([oneDay], [soon], new Set(), NOW, { horizonDays: 5 });
+  // {days} still counts the real distance, not the horizon.
+  assert.match(caught?.text ?? '', /in 3 day\(s\)/);
+
+  // And it never mails somebody twice: the log still applies, unlike a manual send.
+  assert.deepEqual(
+    planNotifications([oneDay], [soon], new Set(['1:1:7:2026-03-13']), NOW, { horizonDays: 5 }),
+    [],
+  );
+});
+
 test('a yearly rule notifies again the next time it comes round', () => {
   const yearly = candidate({ rule: { month: 9, weekday: 1, nth: 1 }, createdAt: new Date(2025, 0, 1) });
   // Last September's mail has gone out already; this September's has not.

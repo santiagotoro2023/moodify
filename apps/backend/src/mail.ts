@@ -40,6 +40,8 @@ export interface SmtpConfig {
   mailFontSize: number;
   mailTextColor: string;
   mailAccentColor: string;
+  jumpStart: boolean;
+  jumpStartDays: number;
   lastReportOn: Date | null;
 }
 
@@ -65,6 +67,8 @@ type SmtpRow = {
   mail_font_size: number;
   mail_text_color: string;
   mail_accent_color: string;
+  jump_start: boolean;
+  jump_start_days: number;
   last_report_on: Date | null;
 };
 
@@ -74,7 +78,7 @@ export async function loadSmtpConfig(): Promise<SmtpConfig | null> {
     `select enabled, transport, graph_tenant_id, graph_client_id, graph_account,
             graph_refresh_token_encrypted, host, port, secure, username, password_encrypted,
             from_name, from_email, admin_email, daily_report, daily_report_hour, send_hour, mail_font, mail_font_size,
-            mail_text_color, mail_accent_color, last_report_on
+            mail_text_color, mail_accent_color, jump_start, jump_start_days, last_report_on
        from smtp_settings order by id limit 1`,
   );
   const row = rows[0];
@@ -113,6 +117,8 @@ export async function loadSmtpConfig(): Promise<SmtpConfig | null> {
     mailFontSize: row.mail_font_size,
     mailTextColor: row.mail_text_color,
     mailAccentColor: row.mail_accent_color,
+    jumpStart: row.jump_start,
+    jumpStartDays: row.jump_start_days,
     lastReportOn: row.last_report_on,
   };
 }

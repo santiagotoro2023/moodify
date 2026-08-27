@@ -459,6 +459,22 @@ Each activity in a reminder links to `/mod/<modname>/view.php?<cmid>` on the con
 its canonical URL, and the reason `modname` is stored at all. The plain-text copy spells the
 address out, since stripping the markup would otherwise take the link with it.
 
+**Catching up on the way live.** The scheduled pass only looks forward: switch mailing on the
+evening before a deadline and the five-day reminder for it never goes out, because the day it was
+owed has passed. So switching the reminder switch *on* can fire a catch-up — everything already
+overdue, plus everything falling due inside a configurable window — immediately, ignoring the send
+hour. It widens every lead-time rule to at least that window, so a install whose only rule is "one
+day before" still tells people about next week's work, and `{days}` keeps counting the real
+distance, so a task three days out reads as three days.
+
+It fires on the *transition* to on, not on every save while it happens to be on, and it respects
+`notification_log`, so anyone who already had their reminder today is skipped — the point is to
+reach the people the scheduled pass can no longer reach, not to mail everybody again. Off by
+default: a first sync against a busy Moodle can leave a lot of tasks overdue, and discovering that
+by mailing a hundred students is not a discovery anyone wants. The send itself is not awaited —
+thirty messages over Graph outlast an HTTP request — and lands in `lastSentAt` / `lastError` like
+every other send.
+
 **One batch a day, and a manual override.** The pass runs every fifteen minutes but only mails at
 or after the configured hour (default 07:00): eligibility changes at midnight, so the first pass
 past the hour carries the whole day's reminders and nobody is told at 03:00 that something is due

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth.ts';
 import { encryptSecret } from '../crypto.ts';
 import { sql } from '../db.ts';
+import { runCatchUp } from '../notify.ts';
 import { UploadError, assetUrl, saveImageUpload } from '../uploads.ts';
 import {
   GRAPH_SCOPE,
@@ -48,6 +49,8 @@ const smtpBodySchema = z.object({
   mailFontSize: z.number().int().min(10).max(28).optional(),
   mailTextColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   mailAccentColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  jumpStart: z.boolean().optional(),
+  jumpStartDays: z.number().int().min(1).max(60).optional(),
 });
 
 const ruleBodySchema = z
@@ -109,6 +112,8 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       mail_font_size: number;
       mail_text_color: string;
       mail_accent_color: string;
+      jump_start: boolean;
+      jump_start_days: number;
       last_sent_at: Date | null;
       last_error: string | null;
     }>(
@@ -117,6 +122,7 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
               host, port, secure, username, password_encrypted, from_name, from_email,
               admin_email, daily_report, daily_report_hour, send_hour,
               mail_font, mail_font_size, mail_text_color, mail_accent_color,
+              jump_start, jump_start_days,
               last_sent_at, last_error
          from smtp_settings order by id limit 1`,
     );
@@ -157,6 +163,8 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       mailFontSize: row?.mail_font_size ?? 15,
       mailTextColor: row?.mail_text_color ?? '#1f2933',
       mailAccentColor: row?.mail_accent_color ?? '#2563eb',
+      jumpStart: row?.jump_start ?? false,
+      jumpStartDays: row?.jump_start_days ?? 5,
       lastSentAt: row?.last_sent_at?.toISOString() ?? null,
       lastError: row?.last_error ?? null,
       usersWithoutEmail: missing.map((entry) => entry.fullname),
@@ -169,6 +177,12 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid settings.' });
     }
     const body = parsed.data;
+
+    // Read before the write: the catch-up fires on the *transition* to on, not on every
+    // save while it happens to be on, or every unrelated setting change would re-run it.
+    const { rows: before } = await sql<{ enabled: boolean; jump_start: boolean; jump_start_days: number }>(
+      'select enabled, jump_start, jump_start_days from smtp_settings order by id limit 1',
+    );
 
     // undefined = leave alone, '' = clear, anything else = replace. coalesce on the SQL
     // side would conflate the first two.
@@ -198,7 +212,9 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
          mail_font          = coalesce($16, mail_font),
          mail_font_size     = coalesce($17, mail_font_size),
          mail_text_color    = coalesce($18, mail_text_color),
-         mail_accent_color  = coalesce($19, mail_accent_color)`,
+         mail_accent_color  = coalesce($19, mail_accent_color),
+         jump_start         = coalesce($20, jump_start),
+         jump_start_days    = coalesce($21, jump_start_days)`,
       [
         body.enabled ?? null,
         body.host ?? null,
@@ -219,9 +235,23 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
         body.mailFontSize ?? null,
         body.mailTextColor ?? null,
         body.mailAccentColor ?? null,
+        body.jumpStart ?? null,
+        body.jumpStartDays ?? null,
       ],
     );
-    return { ok: true };
+
+    const switchedOn = body.enabled === true && before[0]?.enabled === false;
+    const jumpStart = body.jumpStart ?? before[0]?.jump_start ?? false;
+    if (switchedOn && jumpStart) {
+      // Not awaited: thirty messages over Graph outlast an HTTP request, and the outcome
+      // is already reported the way every other send is — lastSentAt and lastError in
+      // this same card, on the next reload.
+      void runCatchUp(request.log, body.jumpStartDays ?? before[0]?.jump_start_days ?? 5).catch(
+        (err: unknown) => request.log.error({ err }, 'catch-up failed'),
+      );
+      return { ok: true, catchUp: true };
+    }
+    return { ok: true, catchUp: false };
   });
 
   // -------------------------------------------------------------------------
