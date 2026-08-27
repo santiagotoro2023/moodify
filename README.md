@@ -389,6 +389,15 @@ address for is skipped, and Settings names them, because a reminder nobody recei
 one that was never configured. Rules are global — "5 days before" is written once and applies to
 every task, and several lead-time rules can coexist. The overdue rule fires once per occurrence.
 
+**One batch a day, and a manual override.** The pass runs every fifteen minutes but only mails at
+or after the configured hour (default 07:00): eligibility changes at midnight, so the first pass
+past the hour carries the whole day's reminders and nobody is told at 03:00 that something is due
+tomorrow. Sending by hand from the Tasks page ignores both the hour and the rule's own window —
+an admin pressing the button has decided those, and a button that quietly does nothing because
+the date is three weeks out would be worse than no button. What a manual send still will not do is
+mail somebody who has finished the work or has no address; those are not the admin's call. It logs
+what it sent, so the scheduled pass does not repeat it.
+
 `notification_log` is what makes "once" true across restarts, manual re-syncs and the fifteen-minute
 poll. Its key includes the due date, not just the task: a yearly task comes round again next
 September and has to be allowed to notify again, and the date is what makes this year's reminder a

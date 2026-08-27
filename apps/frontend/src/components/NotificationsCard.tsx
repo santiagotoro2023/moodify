@@ -372,6 +372,29 @@ export function NotificationsCard() {
         <Switch checked={smtp.enabled} onCheckedChange={(v) => void patch({ enabled: v })} />
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <Label htmlFor="smtp-send-hour" className="mb-0 self-center">
+          Send the day's reminders at
+          <span className="mt-0.5 block text-xs font-normal text-muted">
+            Everything owed that day goes out in one batch at this hour, rather than
+            whenever the fifteen-minute pass happens to notice it. Sending by hand from
+            the Tasks page ignores this.
+          </span>
+        </Label>
+        <Select
+          id="smtp-send-hour"
+          className="self-center"
+          value={String(smtp.sendHour)}
+          onChange={(e) => void patch({ sendHour: Number(e.target.value) })}
+        >
+          {Array.from({ length: 24 }, (_, hour) => (
+            <option key={hour} value={hour}>
+              {`${hour}`.padStart(2, '0')}:00
+            </option>
+          ))}
+        </Select>
+      </div>
+
       {smtp.lastError ? (
         <p className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad">
           Last send failed: {smtp.lastError}

@@ -95,6 +95,14 @@ export function planNotifications(
   candidates: readonly Candidate[],
   alreadySent: ReadonlySet<string>,
   now: Date,
+  /**
+   * Drops the two conditions that make this a *scheduled* pass: the rule's window, and
+   * "not already sent". An admin pressing Send on the Tasks page has decided both of
+   * those, and a button that quietly does nothing because the date is three weeks out
+   * would be worse than no button. What it does not drop is completed work and missing
+   * addresses — those are still reasons not to mail somebody.
+   */
+  force = false,
 ): PlannedMail[] {
   type Item = { candidate: Candidate; dueAt: Date; dueOn: string };
   type Group = {
@@ -112,15 +120,18 @@ export function planNotifications(
 
       let dueAt: Date | null;
       if (rule.kind === 'overdue') {
+        // Forced, an overdue rule aimed at something not yet overdue still has to name a
+        // date, and the only honest one is the date it will be due.
         dueAt = deadlineDueAt(item.rule, item.createdAt, now);
+        if (dueAt === null && force) dueAt = deadlineNextDueAt(item.rule, now);
       } else {
         const next = deadlineNextDueAt(item.rule, now);
-        dueAt = next !== null && daysBetween(now, next) <= (rule.daysBefore ?? 0) ? next : null;
+        dueAt = next !== null && (force || daysBetween(now, next) <= (rule.daysBefore ?? 0)) ? next : null;
       }
       if (dueAt === null) continue;
 
       const dueOn = isoDay(dueAt);
-      if (alreadySent.has(sentKey(rule.id, item.deadlineId, item.userId, dueOn))) continue;
+      if (!force && alreadySent.has(sentKey(rule.id, item.deadlineId, item.userId, dueOn))) continue;
 
       const key =
         rule.kind === 'overdue'
@@ -228,6 +239,23 @@ export async function loadRules(): Promise<NotificationRule[]> {
   }));
 }
 
+/** One rule by id, enabled or not: a manual send uses whatever wording the admin picks. */
+export async function loadRule(id: number): Promise<NotificationRule | null> {
+  const { rows } = await sql<RuleRow>(
+    `select id, kind, days_before, subject, body from notification_rules where id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  if (row === undefined) return null;
+  return {
+    id: row.id,
+    kind: row.kind === 'overdue' ? 'overdue' : 'before',
+    daysBefore: row.days_before,
+    subject: row.subject,
+    body: row.body,
+  };
+}
+
 /**
  * Every (task × enrolled person) pairing, with the person's completion state.
  *
@@ -318,13 +346,7 @@ function buildDailyReport(candidates: readonly Candidate[], now: Date): string |
   return parts.join('\n');
 }
 
-/**
- * One pass: work out what is owed, send it, record it.
- *
- * Logging happens per mail that actually left, not per mail planned — a send that failed
- * has to be retried on the next pass, and a duplicate is a smaller problem than a
- * reminder nobody ever gets.
- */
+/** One pass: work out what is owed, send it, record it. */
 export async function runNotifications(logger: FastifyBaseLogger): Promise<void> {
   const config = await loadSmtpConfig();
   if (!smtpIsUsable(config) || !config.enabled) return;
@@ -336,14 +358,38 @@ export async function runNotifications(logger: FastifyBaseLogger): Promise<void>
   ]);
 
   const now = new Date();
-  const planned = planNotifications(rules, candidates, alreadySent, now);
 
+  // One batch a day, at the configured hour. Eligibility changes at midnight, so the
+  // first pass at or after the hour carries the whole day's mail; the passes before it
+  // do nothing, which is the point — nobody wants "due tomorrow" at 03:00.
+  if (now.getHours() >= config.sendHour) {
+    const sent = await deliver(config, planNotifications(rules, candidates, alreadySent, now), logger);
+    if (sent > 0) logger.info({ count: sent }, 'task reminders sent');
+  }
+
+  await maybeSendDailyReport(config.adminEmail, config, candidates, now, logger);
+}
+
+/**
+ * Sends planned mail and records what actually left. Returns how many went out.
+ *
+ * Logging happens per mail that left, not per mail planned — a send that failed has to be
+ * retried on the next pass, and a duplicate is a smaller problem than a reminder nobody
+ * ever gets. A manual send logs too, so the scheduled pass does not repeat it later.
+ */
+export async function deliver(
+  config: NonNullable<Awaited<ReturnType<typeof loadSmtpConfig>>>,
+  planned: readonly PlannedMail[],
+  logger: FastifyBaseLogger,
+): Promise<number> {
+  let sent = 0;
   for (const mail of planned) {
     const result = await sendMails(config, [{ to: mail.email, subject: mail.subject, text: mail.text }]);
     if (result.sent === 0) {
       logger.warn({ userId: mail.userId, err: result.error }, 'task reminder failed');
       continue;
     }
+    sent += 1;
     await sql(
       `insert into notification_log (rule_id, deadline_id, moodle_user_id, due_on)
        select $1, item.id, $4, item.due::date
@@ -357,11 +403,7 @@ export async function runNotifications(logger: FastifyBaseLogger): Promise<void>
       ],
     );
   }
-  if (planned.length > 0) {
-    logger.info({ count: planned.length }, 'task reminders sent');
-  }
-
-  await maybeSendDailyReport(config.adminEmail, config, candidates, now, logger);
+  return sent;
 }
 
 async function maybeSendDailyReport(

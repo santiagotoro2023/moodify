@@ -31,6 +31,7 @@ export interface SmtpConfig {
   adminEmail: string | null;
   dailyReport: boolean;
   dailyReportHour: number;
+  sendHour: number;
   lastReportOn: Date | null;
 }
 
@@ -51,6 +52,7 @@ type SmtpRow = {
   admin_email: string | null;
   daily_report: boolean;
   daily_report_hour: number;
+  send_hour: number;
   last_report_on: Date | null;
 };
 
@@ -59,7 +61,7 @@ export async function loadSmtpConfig(): Promise<SmtpConfig | null> {
   const { rows } = await sql<SmtpRow>(
     `select enabled, transport, graph_tenant_id, graph_client_id, graph_account,
             graph_refresh_token_encrypted, host, port, secure, username, password_encrypted,
-            from_name, from_email, admin_email, daily_report, daily_report_hour, last_report_on
+            from_name, from_email, admin_email, daily_report, daily_report_hour, send_hour, last_report_on
        from smtp_settings order by id limit 1`,
   );
   const row = rows[0];
@@ -93,6 +95,7 @@ export async function loadSmtpConfig(): Promise<SmtpConfig | null> {
     adminEmail: row.admin_email,
     dailyReport: row.daily_report,
     dailyReportHour: row.daily_report_hour,
+    sendHour: row.send_hour,
     lastReportOn: row.last_report_on,
   };
 }

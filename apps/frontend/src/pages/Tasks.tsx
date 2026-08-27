@@ -9,10 +9,12 @@ import {
   type Course,
   type CourseActivity,
   type Deadline,
+  type NotificationRuleDto,
+  type TaskRecipient,
 } from '@moodify/shared';
-import { CalendarClock, Trash2 } from 'lucide-react';
+import { CalendarClock, Send, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
-import { Button, Card, EmptyState, ErrorNote, Label, Select, Spinner } from '@/ui';
+import { Button, Card, Dialog, EmptyState, ErrorNote, Label, Select, Spinner } from '@/ui';
 
 /**
  * Tasks: "this activity has to be done by this date".
@@ -71,6 +73,150 @@ const groupByCourseSection = (deadlines: readonly Deadline[]) =>
       : `${deadline.courseName} › ${deadline.section}`,
   );
 
+/** Reads as the admin thinks of it — "5 days before" — not as the row is stored. */
+function ruleLabel(rule: NotificationRuleDto): string {
+  const when = rule.kind === 'overdue' ? 'When overdue' : `${rule.daysBefore} days before`;
+  return rule.enabled ? when : `${when} (off)`;
+}
+
+/**
+ * Sending one task's reminder by hand.
+ *
+ * Deliberately not "send to everyone who is behind" — that is what the scheduled pass is
+ * for. This is for the single student who needs a nudge, so the recipients are listed by
+ * name and ticked individually, with whoever already finished the work shown but not
+ * selectable: mailing them is never the intent, and hiding them would look like the list
+ * had lost people.
+ */
+function SendDialog({
+  deadline,
+  rules,
+  onClose,
+}: {
+  deadline: Deadline;
+  rules: NotificationRuleDto[];
+  onClose: () => void;
+}) {
+  const [recipients, setRecipients] = useState<TaskRecipient[] | null>(null);
+  const [chosen, setChosen] = useState<Set<number>>(new Set());
+  const [ruleId, setRuleId] = useState(String(rules[0]?.id ?? ''));
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void api
+      .get<TaskRecipient[]>(`/api/deadlines/${deadline.id}/recipients`)
+      .then((list) => {
+        setRecipients(list);
+        // Everyone who could actually receive it, which is the common case; untick from
+        // there rather than hunting for the one person in a class of thirty.
+        setChosen(
+          new Set(list.filter((one) => !one.completed && one.email !== null).map((one) => one.userId)),
+        );
+      })
+      .catch((err: unknown) => setError(errorMessage(err)));
+  }, [deadline.id]);
+
+  const toggle = (userId: number) =>
+    setChosen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(userId)) next.add(userId);
+      return next;
+    });
+
+  const send = async () => {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const result = await api.post<{ sent: number }>(`/api/deadlines/${deadline.id}/notify`, {
+        ruleId: Number(ruleId),
+        userIds: [...chosen],
+      });
+      setNote(`Sent ${result.sent} ${result.sent === 1 ? 'message' : 'messages'}.`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onClose={onClose} title={`Send a reminder — ${deadline.activityName}`}>
+      <div className="space-y-4">
+        {rules.length === 0 ? (
+          <ErrorNote message="No reminder rules exist yet. Add one in Settings first — its wording is what gets sent." />
+        ) : (
+          <div>
+            <Label htmlFor="send-rule">Wording</Label>
+            <Select id="send-rule" value={ruleId} onChange={(e) => setRuleId(e.target.value)}>
+              {rules.map((rule) => (
+                <option key={rule.id} value={rule.id}>
+                  {ruleLabel(rule)}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-1 text-xs text-muted">
+              Goes out now, whatever the rule's own timing says, and is recorded so the
+              scheduled pass does not send the same thing again.
+            </p>
+          </div>
+        )}
+
+        {recipients === null ? (
+          <Spinner className="h-6 w-6" />
+        ) : recipients.length === 0 ? (
+          <p className="text-sm text-muted">Nobody is enrolled for this task.</p>
+        ) : (
+          <ul className="max-h-64 space-y-1 overflow-auto">
+            {recipients.map((one) => {
+              const blocked = one.completed || one.email === null;
+              return (
+                <li key={one.userId}>
+                  <label
+                    className={cn(
+                      'flex items-center gap-2 rounded-lg px-2 py-1 text-sm',
+                      blocked ? 'text-muted' : 'hover:bg-white/5',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-[var(--color-progress)]"
+                      checked={chosen.has(one.userId)}
+                      disabled={blocked}
+                      onChange={() => toggle(one.userId)}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{one.fullname}</span>
+                    {one.completed ? (
+                      <span className="shrink-0 text-xs text-good">done</span>
+                    ) : one.email === null ? (
+                      <span className="shrink-0 text-xs text-warn">no address</span>
+                    ) : null}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {error ? <ErrorNote message={error} /> : null}
+        {note ? <p className="text-sm text-good">{note}</p> : null}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="subtle" onClick={onClose}>
+            Close
+          </Button>
+          <Button onClick={() => void send()} disabled={busy || chosen.size === 0 || ruleId === ''}>
+            {busy ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+            Send to {chosen.size}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
 export default function Tasks() {
   const [deadlines, setDeadlines] = useState<Deadline[] | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -78,6 +224,8 @@ export default function Tasks() {
   const [activities, setActivities] = useState<CourseActivity[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [rules, setRules] = useState<NotificationRuleDto[]>([]);
+  const [sending, setSending] = useState<Deadline | null>(null);
 
   const [courseId, setCourseId] = useState('');
   const [cmid, setCmid] = useState('');
@@ -91,14 +239,16 @@ export default function Tasks() {
 
   const load = useCallback(async () => {
     try {
-      const [d, c, co] = await Promise.all([
+      const [d, c, co, r] = await Promise.all([
         api.get<Deadline[]>('/api/deadlines'),
         api.get<Course[]>('/api/courses'),
         api.get<Cohort[]>('/api/cohorts'),
+        api.get<NotificationRuleDto[]>('/api/notifications/rules'),
       ]);
       setDeadlines(d);
       setCourses(c);
       setCohorts(co);
+      setRules(r);
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
@@ -362,6 +512,14 @@ export default function Tasks() {
                     <Button
                       variant="ghost"
                       size="icon"
+                      aria-label="Send a reminder now"
+                      onClick={() => setSending(deadline)}
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       aria-label="Delete task"
                       onClick={() => void remove(deadline.id)}
                     >
@@ -374,6 +532,10 @@ export default function Tasks() {
           </section>
         ))
       )}
+
+      {sending ? (
+        <SendDialog deadline={sending} rules={rules} onClose={() => setSending(null)} />
+      ) : null}
     </div>
   );
 }

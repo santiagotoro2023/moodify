@@ -660,10 +660,20 @@ export interface SmtpState {
   adminEmail: string;
   dailyReport: boolean;
   dailyReportHour: number;
+  /** Hour of day the reminders go out, so everything arrives in one batch. */
+  sendHour: number;
   lastSentAt: string | null;
   lastError: string | null;
   /** Students Moodle gave no address for; they are skipped rather than guessed at. */
   usersWithoutEmail: string[];
+}
+
+/** Somebody a task's reminder could reach, for the manual send dialog on the Tasks page. */
+export interface TaskRecipient {
+  userId: number;
+  fullname: string;
+  email: string | null;
+  completed: boolean;
 }
 
 export interface NotificationRuleDto {

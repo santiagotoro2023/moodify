@@ -9,7 +9,9 @@ import {
 } from '@moodify/shared';
 import { z } from 'zod';
 import { requireAdmin } from '../auth.ts';
+import { loadSmtpConfig, smtpIsUsable } from '../mail.ts';
 import { getCourseContents } from '../moodle.ts';
+import { deliver, loadCandidates, loadRule, planNotifications } from '../notify.ts';
 import { loadConnection } from '../sync.ts';
 import { sql } from '../db.ts';
 
@@ -253,6 +255,69 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
       [body.courseId, body.cmid, body.cohortId, body.date, body.month, body.weekday, body.nth],
     );
     return reply.code(201).send({ id: rows[0]?.id ?? null });
+  });
+
+  // -------------------------------------------------------------------------
+  // Sending one reminder by hand.
+  //
+  // The scheduled pass waits for a rule's window and refuses to repeat itself, which is
+  // right for something running unattended and wrong for an admin who has decided that
+  // this person needs this mail now. Both conditions are dropped here; completed work and
+  // missing addresses still are not mailed, because those are not the admin's call.
+  // -------------------------------------------------------------------------
+
+  app.get('/api/deadlines/:id/recipients', auth, async (request, reply) => {
+    const parsed = idParam.safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid deadline id.' });
+
+    // Reuses the candidate query the scheduled pass runs, rather than a second one that
+    // could drift from it: whoever this returns is exactly who could be mailed.
+    const candidates = await loadCandidates();
+    return candidates
+      .filter((candidate) => candidate.deadlineId === parsed.data.id)
+      .map((candidate) => ({
+        userId: candidate.userId,
+        fullname: candidate.fullname,
+        email: candidate.email,
+        completed: candidate.completed,
+      }))
+      .sort((a, b) => a.fullname.localeCompare(b.fullname));
+  });
+
+  app.post('/api/deadlines/:id/notify', auth, async (request, reply) => {
+    const id = idParam.safeParse(request.params);
+    const body = z
+      .object({
+        ruleId: z.number().int().positive(),
+        userIds: z.array(z.number().int().positive()).min(1).max(500),
+      })
+      .safeParse(request.body);
+    if (!id.success || !body.success) return reply.code(400).send({ error: 'Invalid request.' });
+
+    const config = await loadSmtpConfig();
+    if (!smtpIsUsable(config)) {
+      return reply.code(400).send({ error: 'Outgoing mail is not configured yet.' });
+    }
+
+    const rule = await loadRule(body.data.ruleId);
+    if (rule === null) return reply.code(404).send({ error: 'No such rule.' });
+
+    const wanted = new Set(body.data.userIds);
+    const candidates = (await loadCandidates()).filter(
+      (candidate) => candidate.deadlineId === id.data.id && wanted.has(candidate.userId),
+    );
+    const planned = planNotifications([rule], candidates, new Set(), new Date(), true);
+    const sent = await deliver(config, planned, request.log);
+
+    if (sent === 0) {
+      return reply.code(502).send({
+        error:
+          planned.length === 0
+            ? 'Nobody to send to — everyone selected has already completed this, or has no address.'
+            : 'The mail server refused the message. Settings shows the reason.',
+      });
+    }
+    return { sent };
   });
 
   app.delete('/api/deadlines/:id', auth, async (request, reply) => {

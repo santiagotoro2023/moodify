@@ -42,6 +42,7 @@ const smtpBodySchema = z.object({
   adminEmail: z.string().trim().max(255).optional(),
   dailyReport: z.boolean().optional(),
   dailyReportHour: z.number().int().min(0).max(23).optional(),
+  sendHour: z.number().int().min(0).max(23).optional(),
 });
 
 const ruleBodySchema = z
@@ -98,13 +99,14 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       admin_email: string | null;
       daily_report: boolean;
       daily_report_hour: number;
+      send_hour: number;
       last_sent_at: Date | null;
       last_error: string | null;
     }>(
       `select enabled, transport, graph_tenant_id, graph_client_id, graph_account,
               graph_refresh_token_encrypted is not null as connected,
               host, port, secure, username, password_encrypted, from_name, from_email,
-              admin_email, daily_report, daily_report_hour, last_sent_at, last_error
+              admin_email, daily_report, daily_report_hour, send_hour, last_sent_at, last_error
          from smtp_settings order by id limit 1`,
     );
     const row = rows[0];
@@ -139,6 +141,7 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       adminEmail: row?.admin_email ?? '',
       dailyReport: row?.daily_report ?? false,
       dailyReportHour: row?.daily_report_hour ?? 7,
+      sendHour: row?.send_hour ?? 7,
       lastSentAt: row?.last_sent_at?.toISOString() ?? null,
       lastError: row?.last_error ?? null,
       usersWithoutEmail: missing.map((entry) => entry.fullname),
@@ -175,7 +178,8 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
          from_email         = coalesce($8, from_email),
          admin_email        = coalesce($9, admin_email),
          daily_report       = coalesce($10, daily_report),
-         daily_report_hour  = coalesce($11, daily_report_hour)`,
+         daily_report_hour  = coalesce($11, daily_report_hour),
+         send_hour          = coalesce($15, send_hour)`,
       [
         body.enabled ?? null,
         body.host ?? null,
@@ -191,6 +195,7 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
         body.transport ?? null,
         body.graphTenantId ?? null,
         body.graphClientId ?? null,
+        body.sendHour ?? null,
       ],
     );
     return { ok: true };
