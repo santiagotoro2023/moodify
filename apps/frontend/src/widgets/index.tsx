@@ -104,13 +104,11 @@ function overdueLabel(overdue: number): string {
 }
 
 function ProgressBar({ entry }: { entry: CompletionEntry }) {
-  if (entry.percent === null) {
-    return (
-      <span className="text-muted" title="This course does not track activity completion">
-        —
-      </span>
-    );
-  }
+  // A course with nothing to complete reads as 0%, not as a dash. The distinction the
+  // spec asks for is kept where it matters — percent_complete stays NULL in the database,
+  // so course_overview still averages tracked courses only — but on a wall display a row
+  // of dashes just looks broken. The 0/0 in the tooltip is what says "nothing tracked".
+  const percent = entry.percent ?? 0;
   const activities = `${entry.activitiesCompleted}/${entry.activitiesTotal} activities`;
   return (
     <span
@@ -120,10 +118,10 @@ function ProgressBar({ entry }: { entry: CompletionEntry }) {
       <span className="h-1.5 w-full min-w-10 overflow-hidden rounded-full bg-white/10">
         <span
           className={cn('block h-full rounded-full', barClass(entry.overdue))}
-          style={{ width: `${entry.percent}%` }}
+          style={{ width: `${percent}%` }}
         />
       </span>
-      <span className="shrink-0 tabular-nums text-xs text-muted">{Math.round(entry.percent)}%</span>
+      <span className="shrink-0 tabular-nums text-xs text-muted">{Math.round(percent)}%</span>
     </span>
   );
 }
@@ -803,22 +801,19 @@ function BadgeCards({
             </div>
 
             {showProgress ? (
-              entry.percent === null ? (
-                <p className="text-xs text-muted">Completion not tracked</p>
-              ) : (
-                // Full width: the bar is the headline number of this widget.
-                <div className="flex items-center gap-3">
-                  <span className={cn('flex-1 overflow-hidden rounded-full bg-white/10', bar)}>
-                    <span
-                      className={cn('block h-full rounded-full', barClass(entry.overdue))}
-                      style={{ width: `${entry.percent}%` }}
-                    />
-                  </span>
-                  <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted">
-                    {Math.round(entry.percent)}%
-                  </span>
-                </div>
-              )
+              // Full width: the bar is the headline number of this widget. Nothing
+              // tracked reads as 0%, same as everywhere else.
+              <div className="flex items-center gap-3">
+                <span className={cn('flex-1 overflow-hidden rounded-full bg-white/10', bar)}>
+                  <span
+                    className={cn('block h-full rounded-full', barClass(entry.overdue))}
+                    style={{ width: `${entry.percent ?? 0}%` }}
+                  />
+                </span>
+                <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted">
+                  {Math.round(entry.percent ?? 0)}%
+                </span>
+              </div>
             ) : null}
 
             <div className={cn('border-t border-edge/60', density === 'compact' ? 'pt-1.5' : 'pt-3')}>
@@ -1040,7 +1035,7 @@ function SegmentRows({
             {segment.label}
           </dt>
           <dd className="text-right tabular-nums">
-            {segment.percent === null ? '—' : `${Math.round(segment.percent)}%`}
+            {Math.round(segment.percent ?? 0)}%
           </dd>
           <dd
             className="text-right tabular-nums text-bad"
@@ -1220,7 +1215,7 @@ function PersonRing({
                   className={cn('font-medium tabular-nums', segment.overdue > 0 ? 'fill-bad' : 'fill-ink')}
                   fontSize={centreFont}
                 >
-                  {segment.percent === null ? '—' : `${Math.round(segment.percent)}%`}
+                  {Math.round(segment.percent ?? 0)}%
                   <title>{segment.title}</title>
                 </text>
               </g>

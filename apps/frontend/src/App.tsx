@@ -85,6 +85,13 @@ function AppLayout({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * A dashboard is meant to fill the monitor it is on: past 1600px the cap was dead space
+   * down both sides that no widget could grow into, however wide you dragged it. Every
+   * other page stays bounded — a settings field 2500px wide is not an improvement.
+   */
+  const shellWidth = location.pathname.startsWith('/dashboards') ? 'max-w-none' : 'max-w-[1600px]';
+
   const navLink = (to: string, label: string, icon: ReactNode) => (
     <Link
       to={to}
@@ -103,7 +110,7 @@ function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-edge bg-ground/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-[1600px] items-center gap-4 px-5 py-3">
+        <div className={cn('mx-auto flex items-center gap-4 px-5 py-3', shellWidth)}>
           <img
             src={state?.logoUrl || DEFAULT_LOGO}
             alt="Moodify"
@@ -135,7 +142,7 @@ function AppLayout({ children }: { children: ReactNode }) {
 
         {syncFailed ? (
           <div className="border-t border-warn/30 bg-warn/10 px-5 py-2">
-            <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 text-sm">
+            <div className={cn('mx-auto flex flex-wrap items-center gap-3 text-sm', shellWidth)}>
               <AlertTriangle className="h-4 w-4 shrink-0 text-warn" />
               <span className="text-warn">
                 Last sync failed: {connection?.lastSyncError ?? 'unknown error'} (
@@ -151,7 +158,7 @@ function AppLayout({ children }: { children: ReactNode }) {
 
         {state && !connection ? (
           <div className="border-t border-edge bg-surface px-5 py-2">
-            <div className="mx-auto flex max-w-[1600px] items-center gap-3 text-sm text-muted">
+            <div className={cn('mx-auto flex items-center gap-3 text-sm text-muted', shellWidth)}>
               <PlugZap className="h-4 w-4 shrink-0" />
               No Moodle connection configured.
               <Link to="/settings" className="text-accent underline underline-offset-2">
@@ -162,7 +169,7 @@ function AppLayout({ children }: { children: ReactNode }) {
         ) : null}
       </header>
 
-      <main className="mx-auto max-w-[1600px] px-5 py-6">
+      <main className={cn('mx-auto px-5 py-6', shellWidth)}>
         {error ? <ErrorNote message={error} className="mb-4" /> : null}
         {children}
       </main>

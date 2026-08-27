@@ -98,9 +98,13 @@ The build spec left a number of choices open. Here is what was picked and why.
 
 **Percent complete.** `completed / total` counted only over activities where completion tracking is
 actually enabled (`tracking !== 0`). A `complete-fail` state counts as not completed. When a course
-has **zero** completion-tracked activities the stored percent is `NULL`, and every widget renders
-that as "not tracked" rather than 0% — the two mean very different things and conflating them
-misreports a course as universally failing.
+has **zero** completion-tracked activities the stored percent is `NULL`. That distinction is kept
+in the database, where it earns its keep — *Course overview* averages tracked courses only, so an
+untracked course cannot drag a class average to zero.
+
+It is not carried into the display, though. Widgets render `NULL` as **0%**, not as a dash: on a
+wall-mounted dashboard a column of dashes reads as a broken sync rather than as a considered
+distinction. What is actually tracked stays visible in the tooltip, which says `0/0 activities`.
 
 **Who appears in widgets.** `core_enrol_get_enrolled_users` returns teachers and managers alongside
 students. Every widget filters to enrolments carrying the `student` role by default, so a teacher
@@ -146,6 +150,11 @@ duration of a resize and the resulting overlap is resolved at resize-stop, which
 widget down. That resolution walks the layout in array order and moves whichever item comes *later*,
 not whichever is lower on screen, so the grid is fed its widgets sorted by `(y, x)` — in creation
 order a widget resized taller could otherwise be shoved below the neighbour it grew into.
+
+**Dashboards fill the window.** Every other page is capped at 1600px, which is a readable line
+length for forms and lists. A dashboard is not either of those — past that cap a widget dragged to
+full width stopped growing and the rest of the monitor stayed empty, so the dashboard routes (admin
+and public alike) drop the cap and the twelve columns are spread across whatever width there is.
 
 **Unconfigured widgets.** A widget is created with nothing selected and reports what it still
 needs. Requiring a course before a widget could be added made three of the five impossible to add

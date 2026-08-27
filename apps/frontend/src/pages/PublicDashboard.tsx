@@ -99,7 +99,7 @@ export default function PublicDashboard() {
     <div className="min-h-screen">
       <StickyBackground imageUrl={assetUrl(payload.dashboard.backgroundImagePath)} />
 
-      <header className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-5 py-5">
+      <header className="mx-auto flex flex-wrap items-center gap-3 px-5 py-5">
         <img
           src={brand?.logoUrl || '/brand/moodify-logo.svg'}
           alt="Moodify"
@@ -118,7 +118,7 @@ export default function PublicDashboard() {
         ) : null}
       </header>
 
-      <main className="mx-auto max-w-[1600px] px-5 pb-10">
+      <main className="mx-auto px-5 pb-10">
         <DashboardGrid
           dashboard={payload.dashboard}
           readOnly
