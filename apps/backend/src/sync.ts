@@ -24,6 +24,9 @@
  * badge rows — a transient Moodle permission glitch would destroy real data. Instead a
  * disappeared course/user simply stops having its `last_seen_at` refreshed, which is
  * enough for a future "stale entities" cleanup to be an explicit, admin-triggered action.
+ *   The exception is the two mirror tables — activity_completion and badge_issued — whose
+ *   rows are not entities but observations of a live Moodle state. An un-completed
+ *   activity or a revoked badge has to disappear, and both are re-read every poll.
  */
 
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -518,6 +521,18 @@ async function refreshPair(ctx: RunContext, courseId: number, userId: number): P
 async function refreshUserBadges(ctx: RunContext, userId: number): Promise<void> {
   const badges = await getUserBadges(ctx.conn, userId);
   await storeBadges(ctx, userId, badges);
+
+  // Unscoped, so this IS every badge the user still holds. Anything else on record was
+  // revoked, or its badge was deleted in Moodle, and has to stop showing up in widgets —
+  // every badge query joins through badge_issued, so leaving the row was leaving the
+  // badge on screen forever. `<> all('{}')` is true, so a user who now holds none is
+  // cleared out too. Safe against a Moodle hiccup: a failed fetch throws before it gets
+  // here, and issuance is re-read from Moodle on the very next poll anyway.
+  await sql(
+    `delete from badge_issued
+      where moodle_user_id = $1 and moodle_badge_id <> all($2::int[])`,
+    [userId, badges.map((badge) => badge.id)],
+  );
 }
 
 /**

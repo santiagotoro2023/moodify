@@ -165,8 +165,18 @@ export function DashboardGrid({
   const [configuring, setConfiguring] = useState<Widget | null>(null);
   /** Set when saving the arrangement failed — losing it silently is the worst outcome. */
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [resizing, setResizing] = useState(false);
 
-  const layout: Layout[] = dashboard.widgets.map((widget) => ({
+  /**
+   * Top-to-bottom order, and it is load-bearing. When a resize ends up overlapping,
+   * react-grid-layout's compaction pushes down whichever item comes LATER in this array,
+   * not whichever one is lower on screen — so in creation order a widget resized taller
+   * can be shoved below the neighbour it grew into. Compaction reads the children order
+   * too, hence one sorted array for both.
+   */
+  const widgets = [...dashboard.widgets].sort((a, b) => a.y - b.y || a.x - b.x);
+
+  const layout: Layout[] = widgets.map((widget) => ({
     i: String(widget.id),
     x: widget.x,
     y: widget.y,
@@ -252,16 +262,28 @@ export function DashboardGrid({
         compactType={null}
         // And with no gravity to resolve overlaps, a drag must not shove its neighbour
         // out of the way either — an occupied cell simply refuses the drop.
-        preventCollision
+        //
+        // A *resize*, though, has to be allowed to overlap or it cannot happen at all:
+        // preventCollision refuses the whole resize rather than clamping it, restoring w
+        // AND h from before the drag, so a full-width widget with anything underneath
+        // could never be made taller — the drag followed the cursor and snapped back on
+        // release. Growing sideways never collides, which is exactly why only the
+        // vertical direction looked broken. Off for the duration of the resize; the
+        // overlap it allows is resolved at resize-stop by pushing the lower widget down.
+        preventCollision={!resizing}
         // NOT measureBeforeMount. It was tried, to avoid WidthProvider's hardcoded
         // 1280px first paint, and it made every existing widget render as a 1×1 box —
         // react-grid-layout's fallback for a child it cannot match to a layout entry,
         // which stacks them into a thin grey column. The 1280px flash is cosmetic and
         // self-corrects on the first measurement; this was not.
         onDragStop={persist}
-        onResizeStop={persist}
+        onResizeStart={() => setResizing(true)}
+        onResizeStop={(next) => {
+          setResizing(false);
+          persist(next);
+        }}
       >
-        {dashboard.widgets.map((widget) => {
+        {widgets.map((widget) => {
           const Icon = WIDGET_META[widget.type].icon;
           return (
             <div key={String(widget.id)}>

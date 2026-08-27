@@ -138,6 +138,15 @@ Layout writes now happen immediately, only on drag-stop and resize-stop, and the
 if the update matched fewer widgets than were sent — a partly-saved arrangement looks exactly like
 the grid moving things by itself, so it is reported rather than swallowed.
 
+**Resizing is the one place overlap is allowed.** `preventCollision` refuses a colliding resize
+outright — it restores both `w` and `h` from before the drag — so a widget with anything underneath
+could not be made taller at all: the frame followed the cursor and snapped back on release, while
+growing sideways worked, because sideways rarely collides. It is therefore switched off for the
+duration of a resize and the resulting overlap is resolved at resize-stop, which pushes the lower
+widget down. That resolution walks the layout in array order and moves whichever item comes *later*,
+not whichever is lower on screen, so the grid is fed its widgets sorted by `(y, x)` — in creation
+order a widget resized taller could otherwise be shoved below the neighbour it grew into.
+
 **Unconfigured widgets.** A widget is created with nothing selected and reports what it still
 needs. Requiring a course before a widget could be added made three of the five impossible to add
 at all.
@@ -160,6 +169,14 @@ known-good snapshot keeps rendering.
 **Deletions.** Courses and users that vanish from Moodle are not hard-deleted — that would cascade
 their completion snapshots away, sometimes because of a transient API hiccup. They simply stop
 having `last_seen_at` refreshed.
+
+The two mirror tables are the exception, because their rows are observations rather than entities.
+`activity_completion` drops an activity that is no longer complete, and `badge_issued` drops a badge
+the user no longer holds — revoked, or deleted outright in Moodle. Both are re-read from Moodle on
+every poll, so a bad read costs at most one interval. Without the badge prune a deleted badge stayed
+on the rings and the leaderboard forever: every badge query joins through `badge_issued`, and nothing
+ever removed a row. The unscoped `core_badges_get_user_badges` call, which already runs once per user
+per poll, is the authoritative list — whatever it does not return is gone.
 
 **History, and the one exception to "live snapshot only".** Everything except the *Over time*
 widget reads a snapshot that each sync overwrites. That widget needs a trail, so `metric_history`
