@@ -36,6 +36,7 @@ interface DashboardRow {
   title_right: string | null;
   title_gap: number | null;
   logo_height: number | null;
+  title_size: number | null;
   background_image_path: string | null;
   is_public: boolean;
   public_share_token: string | null;
@@ -74,6 +75,7 @@ export async function toDashboard(row: DashboardRow): Promise<Dashboard> {
     titleRight: row.title_right,
     titleGap: row.title_gap,
     logoHeight: row.logo_height,
+    titleSize: row.title_size,
     backgroundImagePath: row.background_image_path,
     isPublic: row.is_public,
     publicShareToken: row.public_share_token,
@@ -83,8 +85,8 @@ export async function toDashboard(row: DashboardRow): Promise<Dashboard> {
 }
 
 const DASHBOARD_COLUMNS = `id, name, title_left, title_right, title_gap, logo_height,
-                           background_image_path, is_public, public_share_token,
-                           anonymize_on_public`;
+                           title_size, background_image_path, is_public,
+                           public_share_token, anonymize_on_public`;
 
 async function findDashboard(id: number): Promise<DashboardRow | null> {
   const { rows } = await sql<DashboardRow>(
@@ -144,6 +146,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
         // Nullable, not just optional: null is how the form says "back to the default".
         titleGap: z.number().int().min(0).max(400).nullable().optional(),
         logoHeight: z.number().int().min(8).max(400).nullable().optional(),
+        titleSize: z.number().int().min(8).max(200).nullable().optional(),
         isPublic: z.boolean().optional(),
         anonymizeOnPublic: z.boolean().optional(),
       })
@@ -165,6 +168,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
          title_right         = case when $9 then $10 else title_right end,
          title_gap           = case when $11 then $12 else title_gap end,
          logo_height         = case when $13 then $14 else logo_height end,
+         title_size          = case when $15 then $16 else title_size end,
          updated_at          = now()
        where id = $1
        returning ${DASHBOARD_COLUMNS}`,
@@ -185,6 +189,8 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
         body.titleGap ?? null,
         body.logoHeight !== undefined,
         body.logoHeight ?? null,
+        body.titleSize !== undefined,
+        body.titleSize ?? null,
       ],
     );
     const row = rows[0];

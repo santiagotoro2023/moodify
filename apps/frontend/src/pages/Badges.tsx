@@ -48,7 +48,9 @@ export default function Badges() {
         <p className="mt-1 max-w-3xl text-sm text-muted">
           What each badge means, in your words. The text here is what a student sees when
           they click a badge on a dashboard — Moodle's own description is shown underneath
-          each field for reference and is left untouched.
+          each field for reference and is left untouched. Only badges somebody currently
+          holds are listed: a badge deleted or revoked in Moodle leaves this page on the
+          next sync, and an unearned one appears the day it is first awarded.
         </p>
       </div>
 
@@ -61,7 +63,9 @@ export default function Badges() {
           hint="Moodle only reports badges that have been awarded to somebody, so a badge appears here the first time a student earns it."
         />
       ) : (
-        <div className="space-y-3">
+        // Two columns from 1024px up. One badge per full-width row meant scrolling past
+        // a screen of mostly empty card to reach the tenth badge.
+        <div className="grid gap-3 lg:grid-cols-2">
           {badges.map((badge) => (
             <BadgeRow key={badge.id} badge={badge} onSaved={() => void load()} />
           ))}
@@ -95,25 +99,25 @@ function BadgeRow({ badge, onSaved }: { badge: BadgeAdmin; onSaved: () => void }
   };
 
   return (
-    <Card className="flex flex-col gap-4 sm:flex-row">
+    <Card className="flex gap-3 p-4">
       {image ? (
-        <img src={image} alt="" className="h-20 w-20 shrink-0 self-start object-contain" />
+        <img src={image} alt="" className="h-14 w-14 shrink-0 self-start object-contain" />
       ) : (
-        <span className="grid h-20 w-20 shrink-0 self-start place-items-center rounded-full bg-white/8">
-          <Award className="h-8 w-8 text-muted" aria-hidden="true" />
+        <span className="grid h-14 w-14 shrink-0 self-start place-items-center rounded-full bg-white/8">
+          <Award className="h-6 w-6 text-muted" aria-hidden="true" />
         </span>
       )}
 
       <div className="min-w-0 flex-1">
-        <h2 className="text-sm font-medium">{badge.name}</h2>
+        <h2 className="text-sm font-medium leading-tight">{badge.name}</h2>
         <p className="text-xs text-muted">
-          {badge.courseName ?? 'Site-wide badge'} · held by {badge.holders}{' '}
+          {badge.courseName ?? 'Site-wide badge'} · {badge.holders}{' '}
           {badge.holders === 1 ? 'student' : 'students'}
         </p>
 
         <textarea
           value={draft}
-          rows={3}
+          rows={2}
           maxLength={2000}
           placeholder="What this badge is for…"
           onChange={(e) => setDraft(e.target.value)}
@@ -124,14 +128,14 @@ function BadgeRow({ badge, onSaved }: { badge: BadgeAdmin; onSaved: () => void }
         />
 
         {badge.description ? (
-          <p className="mt-1 text-xs text-muted">
+          <p className="mt-1 line-clamp-2 text-xs text-muted" title={badge.description}>
             In Moodle: <span className="italic">{badge.description}</span>
           </p>
         ) : null}
 
         {error ? <ErrorNote message={error} className="mt-2" /> : null}
 
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex h-8 items-center gap-2">
           <Button variant="subtle" size="sm" onClick={() => void save()} disabled={!dirty || saving}>
             {saving ? <Spinner className="h-4 w-4" /> : null}
             Save

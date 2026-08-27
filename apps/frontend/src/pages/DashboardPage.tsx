@@ -4,6 +4,7 @@ import {
   DEFAULT_LOGO_HEIGHT,
   DEFAULT_TITLE_GAP,
   WIDGET_TYPES,
+  titleSizeFor,
   type Dashboard,
   type WidgetType,
 } from '@moodify/shared';
@@ -294,6 +295,7 @@ function DashboardSettingsDialog({
   const [titleRight, setTitleRight] = useState(dashboard.titleRight ?? '');
   const [titleGap, setTitleGap] = useState(String(dashboard.titleGap ?? DEFAULT_TITLE_GAP));
   const [logoHeight, setLogoHeight] = useState(String(dashboard.logoHeight ?? ''));
+  const [titleSize, setTitleSize] = useState(String(dashboard.titleSize ?? ''));
   const [error, setError] = useState<string | null>(null);
   const [confirmShare, setConfirmShare] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState('');
@@ -303,6 +305,7 @@ function DashboardSettingsDialog({
   useEffect(() => setTitleRight(dashboard.titleRight ?? ''), [dashboard.titleRight]);
   useEffect(() => setTitleGap(String(dashboard.titleGap ?? DEFAULT_TITLE_GAP)), [dashboard.titleGap]);
   useEffect(() => setLogoHeight(String(dashboard.logoHeight ?? '')), [dashboard.logoHeight]);
+  useEffect(() => setTitleSize(String(dashboard.titleSize ?? '')), [dashboard.titleSize]);
 
   const patch = async (body: Record<string, unknown>) => {
     try {
@@ -352,9 +355,9 @@ function DashboardSettingsDialog({
             onChange={(e) => setTitleRight(e.target.value)}
           />
         </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
           <div>
-            <Label htmlFor="dash-gap">Space either side of the logo (px)</Label>
+            <Label htmlFor="dash-gap">Space either side (px)</Label>
             <Input
               id="dash-gap"
               type="number"
@@ -365,7 +368,7 @@ function DashboardSettingsDialog({
             />
           </div>
           <div>
-            <Label htmlFor="dash-logo-h">Logo height on this dashboard (px)</Label>
+            <Label htmlFor="dash-logo-h">Logo height (px)</Label>
             <Input
               id="dash-logo-h"
               type="number"
@@ -374,6 +377,20 @@ function DashboardSettingsDialog({
               value={logoHeight}
               placeholder={`Site default (${DEFAULT_LOGO_HEIGHT})`}
               onChange={(e) => setLogoHeight(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="dash-title-size">Heading size (px)</Label>
+            <Input
+              id="dash-title-size"
+              type="number"
+              min={8}
+              max={200}
+              value={titleSize}
+              placeholder={`Auto (${titleSizeFor(
+                Number(logoHeight) || dashboard.logoHeight || DEFAULT_LOGO_HEIGHT,
+              )})`}
+              onChange={(e) => setTitleSize(e.target.value)}
             />
           </div>
         </div>
@@ -387,6 +404,7 @@ function DashboardSettingsDialog({
               // Blank means "back to the default", which the API reads as null.
               titleGap: titleGap === '' ? null : Number(titleGap),
               logoHeight: logoHeight === '' ? null : Number(logoHeight),
+              titleSize: titleSize === '' ? null : Number(titleSize),
             })
           }
         >
@@ -395,8 +413,8 @@ function DashboardSettingsDialog({
         <p className="mt-1 text-xs text-muted">
           The logo sits centred between the two headings, on this page and on the share
           link. Leave a heading blank to show nothing on that side, and the logo height
-          blank to use the site logo size from Settings. The headings scale with the logo,
-          so one number resizes the whole row.
+          blank to use the site logo size from Settings. Leave the heading size blank and
+          it follows the logo, so one number resizes the whole row.
         </p>
       </div>
 

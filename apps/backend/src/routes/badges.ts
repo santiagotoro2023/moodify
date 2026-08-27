@@ -7,9 +7,19 @@ import { sql } from '../db.ts';
 /**
  * The badge catalogue, and the descriptions Moodify keeps for them.
  *
- * "Every badge" here means every badge Moodify has seen awarded to somebody: Moodle
- * exposes no endpoint listing the badges a course merely *has* (see §9.2 and the README),
- * so an unearned badge is invisible until the first student earns it.
+ * "Every badge" here means every badge somebody currently holds: Moodle exposes no
+ * endpoint listing the badges a course merely *has* (see §9.2 and the README), so an
+ * unearned badge is invisible until the first student earns it.
+ *
+ * That inner join is also what keeps deleted badges out. Revoking or deleting a badge in
+ * Moodle drops its badge_issued rows on the next sync, and a badge nobody holds is a
+ * badge Moodify has no evidence for — listing it would offer a description for something
+ * that no longer exists. Every other reader already joins through badge_issued, so this
+ * is the one place the rule had to be stated.
+ *
+ * ponytail: the badges row itself is left behind, holding its custom description. It
+ * costs a row and means a re-created badge keeps its text. Prune in the sync if that
+ * table ever grows enough to notice.
  *
  * The custom description lives in its own column rather than overwriting Moodle's, which
  * every discovery run rewrites from the source.
@@ -32,7 +42,7 @@ export async function badgeRoutes(app: FastifyInstance): Promise<void> {
               count(bi.moodle_user_id) as holders
          from badges b
          left join courses c on c.moodle_course_id = b.moodle_course_id
-         left join badge_issued bi on bi.moodle_badge_id = b.moodle_badge_id
+         join badge_issued bi on bi.moodle_badge_id = b.moodle_badge_id
         group by b.moodle_badge_id, c.fullname
         order by c.fullname nulls first, b.name`,
     );

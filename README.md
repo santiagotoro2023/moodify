@@ -581,18 +581,31 @@ page. That description is stored separately from Moodle's own, which every disco
 from the source; the pop-up prefers Moodify's and falls back to Moodle's. The Badges page can only
 list badges somebody has actually earned — Moodle exposes no endpoint for the badges a course merely
 *has* (see the badge-discovery note above) — so a badge appears there the day it is first awarded.
-The rings widget lays badges out in two fixed columns, in an order set in its settings; anything not
-in that order follows alphabetically, so a newly awarded badge shows up rather than disappearing.
+The rings widget lays badges out in an order set in its settings; anything not in that order follows
+alphabetically, so a newly awarded badge shows up rather than disappearing. The grid's minimum
+column is measured from the longest *word* in the list rather than being a fixed width, so no track
+is ever narrower than the widest thing that has to fit on one line — which is what stops names
+breaking mid-word ("Netzwerktech / nik"), the one failure that makes a wall of badges unreadable.
+Columns are packed with `auto-fit`, so a wide tile gets two or three and a narrow one falls back to
+one rather than chopping words to force a second column in.
+
+**Only badges somebody holds.** `GET /api/badges` joins through `badge_issued` rather than
+left-joining it, so a badge deleted or revoked in Moodle disappears from the Badges page and from a
+widget's badge ordering as soon as its last holder is re-synced. Every other reader already went
+through `badge_issued`, so that join is the whole rule. The `badges` row itself is left behind
+holding its custom description, which costs one row and means a re-created badge keeps its text.
 
 The pop-up is portalled to `<body>`. A react-grid-layout item positions itself with a CSS transform,
 and a transformed ancestor makes `position: fixed` resolve against *it* rather than the viewport —
 rendered in place, the overlay would be trapped inside the widget it came from and clipped by it.
 
 **The ring's schedule mark.** A short pink tick, half the segment's stroke width and centred in it,
-at 75% opacity. It is drawn even when it lands exactly on the end of the fill. Suppressing it there
+at 75% opacity. It is drawn even when it lands exactly on the end of the fill: suppressing it there
 looked like a tidy-up — the mark says nothing new when you are exactly on schedule — but it also
 hid the plan from everyone who had not started and had nothing due yet, which is the one group a
-plan is most worth showing. Now the only segment without a mark is one that tracks no activities. It used to be a full-width white rule, which read as a cut through the ring — a
+plan is most worth showing. It is *not* drawn for a segment with no tasks set on it at all, or one
+tracking no completable activities. A mark on a course nobody has given a deadline is not a
+schedule; it is a line at wherever the fill happens to be. It used to be a full-width white rule, which read as a cut through the ring — a
 louder statement than "here is the plan". Segment colours accept any six-digit hex now, entered
 beside the curated swatches; the swatches remain the offer, not the limit. There is no legend above
 the wall of rings: every tile carries its own, in the middle of the ring or in the rows beneath it.

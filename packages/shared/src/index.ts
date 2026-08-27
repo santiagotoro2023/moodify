@@ -453,6 +453,8 @@ export interface Dashboard {
   titleGap: number | null;
   /** Logo height in px above this dashboard only. Null = the site-wide logo height. */
   logoHeight: number | null;
+  /** Heading text size in px. Null = derived from the logo height (see titleSizeFor). */
+  titleSize: number | null;
   backgroundImagePath: string | null;
   isPublic: boolean;
   publicShareToken: string | null;
@@ -508,6 +510,16 @@ export const DEFAULT_LOGO_HEIGHT = 32;
  * that is actually visible.
  */
 export const DEFAULT_TITLE_GAP = 16;
+
+/**
+ * Heading size when the dashboard sets none: 60% of the logo's height.
+ *
+ * Cap-height rather than font-size is what the eye compares, and a heading set to the
+ * logo's full pixel height reads considerably taller than the mark beside it.
+ */
+export function titleSizeFor(logoHeight: number): number {
+  return Math.round(logoHeight * 0.6);
+}
 
 // ---------------------------------------------------------------------------
 // Widget data payloads — what GET /api/widgets/:id/data returns per type.

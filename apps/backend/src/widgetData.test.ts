@@ -507,6 +507,9 @@ test('the target mark sits ahead of the fill by exactly the overdue work', () =>
   // Nothing done and nothing due yet: the plan is the start of the segment, and saying
   // so is the whole point of the mark for someone who has not begun.
   assert.equal(targetPercent({ ...facts, overdue: 0 }, 0, 40), 0);
+  // But a course nobody has set a single task on has no schedule to be ahead or behind
+  // of, and a mark there would just be a line drawn at the fill.
+  assert.equal(targetPercent({ ...facts, total: 0, due: 0, overdue: 0 }, 12, 40), null);
   // It can never point past a full ring.
   assert.equal(targetPercent(facts, 39, 40), 100);
 
