@@ -170,6 +170,13 @@ whether or not it also has work due. Both occurrences of a yearly task are place
 and the next, since a calendar that shows only the current one cannot answer "when does this come
 round again". The list view is still there for a full sweep, and the same filters drive both.
 
+**Copy as Markdown.** The task list as a Markdown table, on the clipboard, for pasting into
+Confluence or anywhere else students actually read. A table rather than a list because Confluence,
+Notion and GitHub all render one as a real table, and a sortable date column is the whole point of
+handing it out. Date order, not Moodle order: the reader wants to know what is next and has never
+seen the course page. It exports what is on screen, filters included — filtering to one course and
+then handing out every course's dates is not what the button means.
+
 **Filtering tasks.** By course, by who the task applies to, and by date. Sorting by date drops the
 course/section grouping rather than sorting inside it: the whole point is to see what is due next
 across everything, and the heading that carried the course name goes with it, so the card names its

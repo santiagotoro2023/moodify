@@ -12,7 +12,7 @@ import {
   type NotificationRuleDto,
   type TaskRecipient,
 } from '@moodify/shared';
-import { CalendarClock, ChevronLeft, ChevronRight, Send, Trash2 } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, ClipboardCopy, Send, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
 import { Button, Card, Dialog, EmptyState, ErrorNote, Label, Select, Spinner } from '@/ui';
 
@@ -122,6 +122,29 @@ function occurrencesByDay(deadlines: readonly Deadline[]): Map<string, Deadline[
 }
 
 const WEEKDAY_HEADS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+
+/**
+ * The tasks as a Markdown table, for pasting somewhere students actually read.
+ *
+ * A table rather than a list: Confluence, Notion and GitHub all turn one into a real
+ * table, and a date column that sorts is the whole reason to hand this out. Date order,
+ * not Moodle order — the reader wants to know what is next, and has no idea what the
+ * course page looks like.
+ *
+ * A pipe inside a course name would end the cell early, so it is escaped. Nothing else
+ * needs to be: Markdown has no other character that can break a table row.
+ */
+export function tasksAsMarkdown(deadlines: readonly Deadline[]): string {
+  const cell = (value: string) => value.replace(/\|/g, '\\|');
+  const rows = [...deadlines]
+    .sort((a, b) => dueKey(a) - dueKey(b) || a.activityName.localeCompare(b.activityName))
+    .map((deadline) => {
+      const at = deadline.dueAt ?? deadline.nextDueAt;
+      const when = at === null ? '—' : formatDay(at);
+      return `| ${when}${deadline.date ? '' : ' (yearly)'} | ${cell(deadline.activityName)} | ${cell(deadline.courseName)} | ${cell(deadline.cohortName ?? 'Everyone')} |`;
+    });
+  return ['| Due | Activity | Course | Applies to |', '| --- | --- | --- | --- |', ...rows].join('\n');
+}
 
 /**
  * The month view.
@@ -383,6 +406,7 @@ export default function Tasks() {
   const [sortBy, setSortBy] = useState<'moodle' | 'due'>('moodle');
   const [view, setView] = useState<'calendar' | 'list'>('calendar');
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [copied, setCopied] = useState(false);
 
   const [courseId, setCourseId] = useState('');
   const [cmid, setCmid] = useState('');
@@ -448,6 +472,19 @@ export default function Tasks() {
       setError(errorMessage(err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const copyMarkdown = async () => {
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(tasksAsMarkdown(shown));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // The clipboard API needs a secure context, which is worth saying out loud rather
+      // than leaving a button that does nothing over plain http.
+      setError('The browser would not give access to the clipboard. This needs an https address.');
     }
   };
 
@@ -649,7 +686,7 @@ export default function Tasks() {
       {/* Filters sit over the list, not over the page: they say nothing about the form
           beside them, and a control that looks like it applies to both is worse than no
           control. Hidden until there is more than a handful to sift through. */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {(
           [
             ['calendar', 'Calendar'],
@@ -670,6 +707,19 @@ export default function Tasks() {
             {label}
           </button>
         ))}
+
+        {/* Exports what is on screen, filters and all: filtering to one course and then
+            handing out every course's dates is not what anybody meant by the button. */}
+        <Button
+          variant="subtle"
+          size="sm"
+          className="ml-auto"
+          disabled={shown.length === 0}
+          onClick={() => void copyMarkdown()}
+        >
+          <ClipboardCopy className="h-4 w-4" />
+          {copied ? 'Copied' : 'Copy as Markdown'}
+        </Button>
       </div>
 
       {deadlines !== null && deadlines.length > 3 ? (
