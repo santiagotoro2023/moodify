@@ -56,11 +56,16 @@ const DENSITY: Record<Density, {
   roomy: { gap: 'space-y-4', pad: 'p-5', cell: 'px-3 py-3.5', text: 'text-base', icon: 'h-12 w-12', bar: 'h-2.5' },
 };
 
-/** Badge icon size, set per widget and independent of row size. */
-const BADGE_SIZE: Record<BadgeSize, { icon: string; text: string; pad: string }> = {
-  small: { icon: 'h-9 w-9', text: 'text-xs', pad: 'p-1 pr-3' },
-  medium: { icon: 'h-12 w-12', text: 'text-sm', pad: 'p-1.5 pr-3.5' },
-  large: { icon: 'h-16 w-16', text: 'text-base', pad: 'p-2 pr-4' },
+/**
+ * Badge icon size, set per widget and independent of row size. `track` is the minimum
+ * column width in the uniform grid, and scales with the icon because the icon is what
+ * the name has to share the chip with: a 64px badge in the column width a 36px badge is
+ * happy with leaves the name about three characters a line.
+ */
+const BADGE_SIZE: Record<BadgeSize, { icon: string; text: string; pad: string; track: string }> = {
+  small: { icon: 'h-9 w-9', text: 'text-xs', pad: 'p-1 pr-3', track: '11rem' },
+  medium: { icon: 'h-12 w-12', text: 'text-sm', pad: 'p-1.5 pr-3.5', track: '13rem' },
+  large: { icon: 'h-16 w-16', text: 'text-base', pad: 'p-2 pr-4', track: '15rem' },
 };
 
 /** Widget configs are stored as opaque JSON; only the display fields matter here. */
@@ -155,9 +160,13 @@ function BadgeImage({ badge, size }: { badge: BadgeType; size: string }) {
  * they show in full without each badge costing a whole block of height.
  *
  * `uniform` swaps the flex wrap for a grid, so every chip is the same width whatever its
- * name is and long names truncate instead of stretching. Under a ring that matters: a row
- * of chips at four different widths reads as clutter, and there is a tooltip for the full
- * name. Left alone elsewhere, where a chip hugging its name is the better shape.
+ * name is. Under a ring that matters: a row of chips at four different widths reads as
+ * clutter. Left alone elsewhere, where a chip hugging its name is the better shape.
+ *
+ * A name too long for its column wraps onto a second line rather than being cut off. It
+ * used to truncate, on the theory that the tooltip carried the full name — which is no
+ * use at all on the wall display these tiles exist for, where nothing is hovering. The
+ * column keeps its width, so the chips in a row stay aligned; only that row gets taller.
  */
 function BadgeList({
   badges,
@@ -171,12 +180,12 @@ function BadgeList({
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
-  const { icon, text, pad } = BADGE_SIZE[badgeSize];
+  const { icon, text, pad, track } = BADGE_SIZE[badgeSize];
   return (
     <ul
       className={cn('gap-2', uniform ? 'grid' : 'flex flex-wrap')}
       style={
-        uniform ? { gridTemplateColumns: 'repeat(auto-fill, minmax(9rem, 1fr))' } : undefined
+        uniform ? { gridTemplateColumns: `repeat(auto-fill, minmax(${track}, 1fr))` } : undefined
       }
     >
       {badges.map((badge) => (
@@ -186,7 +195,7 @@ function BadgeList({
           title={badge.description ?? badge.name}
         >
           <BadgeImage badge={badge} size={icon} />
-          <span className={cn('leading-snug', text, uniform && 'min-w-0 truncate')}>
+          <span className={cn('leading-snug', text, uniform && 'min-w-0 break-words')}>
             {badge.name}
           </span>
         </li>
