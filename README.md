@@ -581,13 +581,14 @@ page. That description is stored separately from Moodle's own, which every disco
 from the source; the pop-up prefers Moodify's and falls back to Moodle's. The Badges page can only
 list badges somebody has actually earned — Moodle exposes no endpoint for the badges a course merely
 *has* (see the badge-discovery note above) — so a badge appears there the day it is first awarded.
-The rings widget lays badges out in an order set in its settings; anything not in that order follows
-alphabetically, so a newly awarded badge shows up rather than disappearing. The grid's minimum
-column is measured from the longest *word* in the list rather than being a fixed width, so no track
-is ever narrower than the widest thing that has to fit on one line — which is what stops names
-breaking mid-word ("Netzwerktech / nik"), the one failure that makes a wall of badges unreadable.
-Columns are packed with `auto-fit`, so a wide tile gets two or three and a narrow one falls back to
-one rather than chopping words to force a second column in.
+The rings widget lays badges out in two fixed columns, in an order set in its settings; anything not
+in that order follows alphabetically, so a newly awarded badge shows up rather than disappearing.
+Two columns is the point — a person with fifteen badges has to stay a readable block, not a column
+fifteen rows tall — so the column width is not negotiable and the *text* is what gives: each name is
+set at whatever size makes its longest word fit on one line, down to an 8px floor. That is stated in
+`cqw` against the chip's own width, so it needs no measurement in JS and re-solves itself when the
+widget is resized. Where container queries are unsupported the declaration is invalid and the
+Tailwind text class underneath takes over — with word breaking, but legible.
 
 **Only badges somebody holds.** `GET /api/badges` joins through `badge_issued` rather than
 left-joining it, so a badge deleted or revoked in Moodle disappears from the Badges page and from a

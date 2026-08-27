@@ -59,13 +59,14 @@ const DENSITY: Record<Density, {
 };
 
 /**
- * Badge icon size, set per widget and independent of row size. The uniform grid's column
- * width is measured from the names themselves — see badgeTrackRem.
+ * Badge icon size, set per widget and independent of row size. `track` is the minimum
+ * column width where the grid picks its own column count; a fixed count ignores it and
+ * shrinks the text instead — see badgeNameFontSize.
  */
-const BADGE_SIZE: Record<BadgeSize, { icon: string; text: string; pad: string }> = {
-  small: { icon: 'h-9 w-9', text: 'text-xs', pad: 'p-1 pr-3' },
-  medium: { icon: 'h-12 w-12', text: 'text-sm', pad: 'p-1.5 pr-3.5' },
-  large: { icon: 'h-16 w-16', text: 'text-base', pad: 'p-2 pr-4' },
+const BADGE_SIZE: Record<BadgeSize, { icon: string; text: string; pad: string; track: string }> = {
+  small: { icon: 'h-9 w-9', text: 'text-xs', pad: 'p-1 pr-3', track: '11rem' },
+  medium: { icon: 'h-12 w-12', text: 'text-sm', pad: 'p-1.5 pr-3.5', track: '13rem' },
+  large: { icon: 'h-16 w-16', text: 'text-base', pad: 'p-2 pr-4', track: '15rem' },
 };
 
 /** Name size where badges share a tile with a ring and its rows — one step down. */
@@ -170,12 +171,12 @@ function BadgeImage({ badge, size }: { badge: BadgeType; size: string }) {
  * name is. Under a ring that matters: a row of chips at four different widths reads as
  * clutter. Left alone elsewhere, where a chip hugging its name is the better shape.
  *
- * The grid's minimum column is measured from the longest *word* in the list rather than
- * being a fixed size, so no track is ever narrower than the widest thing that has to fit
- * on one line. That is what stops names breaking mid-word — "Netzwerktech / nik" — which
- * is the one failure that makes a wall of badges unreadable. Columns are packed with
- * auto-fit, so a tile wide enough gets two or three and a narrow one falls to one rather
- * than chopping words to force a second column in.
+ * `columns` fixes the count — two under a ring, whatever the tile's width, because that
+ * is what keeps a person with fifteen badges to a readable block instead of a column
+ * fifteen rows tall. The column width is therefore not negotiable, so the *text* is what
+ * gives: the name is set at whatever size makes its longest word fit on one line, down to
+ * a floor. That is the only way to have both a fixed column count and no "Netzwerktech /
+ * nik" mid-word break, which is the one failure that makes a wall of badges unreadable.
  */
 
 /** Roughly how wide one character is, as a fraction of the font size, in the UI stack. */
@@ -185,34 +186,51 @@ const CHAR_WIDTH = 0.62;
 const BADGE_FONT_REM: Record<BadgeSize, number> = { small: 0.75, medium: 0.875, large: 1 };
 const BADGE_FONT_TIGHT_REM: Record<BadgeSize, number> = { small: 0.625, medium: 0.75, large: 0.875 };
 
-/** Icon diameter plus the chip's own padding and gap, in rem. */
+/** Icon diameter plus the chip's own padding and gap, in rem — the width the name cannot use. */
 const BADGE_CHIP_CHROME: Record<BadgeSize, number> = { small: 3.5, medium: 4.5, large: 5.75 };
 
+/** Never shrink past this, however long the word. Below it nothing is readable anyway. */
+const BADGE_FONT_FLOOR_REM = 0.5;
+
 /**
- * The narrowest a column may be: enough for the chip's furniture plus the longest single
- * word any name in the list contains. Capped so one absurd word cannot force a
- * single-column layout on a wide tile, and floored so two-letter names still line up.
+ * A font size that makes the longest word in `names` fit one line of a chip, expressed
+ * against the chip's own width.
+ *
+ * `cqw` is 1% of the container's inline size, so this needs no measurement in JS and
+ * re-solves itself when the widget is resized. One size for the whole list rather than
+ * per chip: every column is the same width, so differing sizes would only read as
+ * sloppiness. Where container queries are unsupported the whole declaration is invalid
+ * and the Tailwind text class it sits on top of takes over — with word breaking, but
+ * legible.
  */
-export function badgeTrackRem(names: readonly string[], badgeSize: BadgeSize, tight: boolean): number {
+export function badgeNameFontSize(
+  names: readonly string[],
+  badgeSize: BadgeSize,
+  tight: boolean,
+): string {
   const longest = names.reduce(
     (max, name) => name.split(/\s+/).reduce((inner, word) => Math.max(inner, word.length), max),
-    0,
+    1,
   );
-  const font = tight ? BADGE_FONT_TIGHT_REM[badgeSize] : BADGE_FONT_REM[badgeSize];
-  const word = Math.min(longest, 22) * CHAR_WIDTH * font;
-  return Math.max(7, BADGE_CHIP_CHROME[badgeSize] + word);
+  const base = tight ? BADGE_FONT_TIGHT_REM[badgeSize] : BADGE_FONT_REM[badgeSize];
+  const chrome = BADGE_CHIP_CHROME[badgeSize];
+  const room = (longest * CHAR_WIDTH).toFixed(2);
+  return `clamp(${BADGE_FONT_FLOOR_REM}rem, calc((100cqw - ${chrome}rem) / ${room}), ${base}rem)`;
 }
 
 function BadgeList({
   badges,
   badgeSize,
   uniform,
+  columns,
   tight,
   onSelect,
 }: {
   badges: BadgeType[];
   badgeSize: BadgeSize;
   uniform?: boolean;
+  /** Fixed column count. Without it the uniform grid fits as many as the width allows. */
+  columns?: number;
   /** Drops the name a text step. Set where badges share a tile with everything else. */
   tight?: boolean;
   /** Makes each chip a button. Unset leaves them plain text, which is what most callers want. */
@@ -221,20 +239,27 @@ function BadgeList({
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
-  const { icon, text, pad } = BADGE_SIZE[badgeSize];
-  const nameText = tight ? BADGE_TEXT_TIGHT[badgeSize] : text;
-  const track = badgeTrackRem(badges.map((badge) => badge.name), badgeSize, tight === true);
+  const { icon, text, pad, track } = BADGE_SIZE[badgeSize];
+  const grid = uniform || columns !== undefined;
+  const fontSize = badgeNameFontSize(badges.map((badge) => badge.name), badgeSize, tight === true);
   const Chip = onSelect === undefined ? 'span' : 'button';
   return (
     <ul
-      className={cn('gap-2', uniform ? 'grid' : 'flex flex-wrap')}
+      className={cn('gap-2', grid ? 'grid' : 'flex flex-wrap')}
       style={
-        // min() so a narrow tile gives one full-width column instead of overflowing.
-        uniform ? { gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${track}rem), 1fr))` } : undefined
+        grid
+          ? {
+              gridTemplateColumns:
+                columns === undefined
+                  ? `repeat(auto-fill, minmax(${track}, 1fr))`
+                  : `repeat(${columns}, minmax(0, 1fr))`,
+            }
+          : undefined
       }
     >
       {badges.map((badge) => (
-        <li key={badge.id} className={cn(uniform && 'min-w-0')}>
+        // The chip is the query container the name sizes itself against.
+        <li key={badge.id} className={cn(grid && 'min-w-0')} style={grid ? { containerType: 'inline-size' } : undefined}>
           <Chip
             type={onSelect === undefined ? undefined : 'button'}
             onClick={onSelect === undefined ? undefined : () => onSelect(badge)}
@@ -246,9 +271,12 @@ function BadgeList({
             title={badge.customDescription ?? badge.description ?? badge.name}
           >
             <BadgeImage badge={badge} size={icon} />
-            {/* No break-words: the column is already at least as wide as the longest
-                word, so wrapping happens between words or not at all. */}
-            <span className={cn('min-w-0 leading-snug', nameText)}>{badge.name}</span>
+            <span
+              className={cn('min-w-0 leading-snug break-words', tight ? BADGE_TEXT_TIGHT[badgeSize] : text)}
+              style={grid ? { fontSize } : undefined}
+            >
+              {badge.name}
+            </span>
           </Chip>
         </li>
       ))}
@@ -1329,6 +1357,7 @@ function PersonRing({
             badges={entry.badges}
             badgeSize={options.badgeSize}
             uniform
+            columns={2}
             tight
             onSelect={onBadge}
           />
