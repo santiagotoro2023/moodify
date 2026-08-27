@@ -298,7 +298,7 @@ const LINE_COLORS = [
 const OVERDUE_COLOR = '#f43f5e';
 
 /** The schedule mark. Pink rather than white: present without competing with the fill. */
-const TARGET_COLOR = '#f9a8d4';
+const TARGET_COLOR = '#ffc2e0';
 
 /**
  * Segment colours, generated from the number of courses on screen rather than picked
@@ -1242,8 +1242,9 @@ function PersonRing({
 
                   Half the segment's width and centred in it, rather than spanning the
                   whole arc: a full-width rule reads as a cut through the ring, which is
-                  a louder statement than "here is the plan". Soft pink at part opacity
-                  for the same reason — it has to be findable, not the first thing seen. */}
+                  a louder statement than "here is the plan". Pink at full opacity: it is
+                  already short enough not to shout, and the 75% it used to carry made it
+                  hard to pick out against a filled segment at all. */}
               {options.showTarget && targetAngle !== null ? (
                 <line
                   x1={center + (radius - stroke / 4) * Math.sin(targetAngle)}
@@ -1251,9 +1252,8 @@ function PersonRing({
                   x2={center + (radius + stroke / 4) * Math.sin(targetAngle)}
                   y2={center - (radius + stroke / 4) * Math.cos(targetAngle)}
                   stroke={TARGET_COLOR}
-                  strokeWidth={2}
+                  strokeWidth={2.5}
                   strokeLinecap="round"
-                  opacity={0.75}
                 />
               ) : null}
             </g>

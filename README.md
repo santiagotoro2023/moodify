@@ -601,7 +601,8 @@ and a transformed ancestor makes `position: fixed` resolve against *it* rather t
 rendered in place, the overlay would be trapped inside the widget it came from and clipped by it.
 
 **The ring's schedule mark.** A short pink tick, half the segment's stroke width and centred in it,
-at 75% opacity. It is drawn even when it lands exactly on the end of the fill: suppressing it there
+at full opacity — the 75% it started at was hard to pick out against a filled segment, and being
+short already keeps it from shouting. It is drawn even when it lands exactly on the end of the fill: suppressing it there
 looked like a tidy-up — the mark says nothing new when you are exactly on schedule — but it also
 hid the plan from everyone who had not started and had nothing due yet, which is the one group a
 plan is most worth showing. It is *not* drawn for a segment with no tasks set on it at all, or one
