@@ -43,7 +43,7 @@ const smtpBodySchema = z.object({
   dailyReport: z.boolean().optional(),
   dailyReportHour: z.number().int().min(0).max(23).optional(),
   sendHour: z.number().int().min(0).max(23).optional(),
-  mailFont: z.enum(['system', 'sans', 'serif', 'mono']).optional(),
+  mailFont: z.enum(['system', 'sans', 'serif', 'mono', 'grotesk']).optional(),
   mailFontSize: z.number().int().min(10).max(28).optional(),
   mailTextColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   mailAccentColor: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).optional(),

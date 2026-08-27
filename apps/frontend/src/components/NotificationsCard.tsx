@@ -125,6 +125,60 @@ function RuleEditor({
   );
 }
 
+const HEX = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * A colour, as a swatch and as the hex code itself.
+ *
+ * The swatch alone cannot be told "use exactly #38bdf8", which is the whole point when
+ * the mail is supposed to match a house style. Typing commits as soon as the six digits
+ * are there; dragging the swatch commits on release, so one drag is one save rather than
+ * fifty.
+ */
+function ColorField({
+  id,
+  label,
+  value,
+  onCommit,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const valid = HEX.test(draft);
+
+  return (
+    <div>
+      <Label htmlFor={id}>{label}</Label>
+      <div className="flex gap-2">
+        <Input
+          id={id}
+          type="color"
+          className="h-10 w-12 shrink-0 p-1"
+          value={valid ? draft : value}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => valid && onCommit(draft)}
+        />
+        <Input
+          aria-label={`${label} hex code`}
+          value={draft}
+          spellCheck={false}
+          placeholder="#2563eb"
+          onChange={(e) => {
+            const next = e.target.value.trim();
+            setDraft(next);
+            if (HEX.test(next)) onCommit(next);
+          }}
+        />
+      </div>
+      {valid ? null : <p className="mt-1 text-xs text-warn">Six hex digits, like #2563eb.</p>}
+    </div>
+  );
+}
+
 interface DeviceCode {
   deviceCode: string;
   userCode: string;
@@ -426,7 +480,7 @@ export function NotificationsCard() {
         />
       ) : (
       <>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div>
           <Label htmlFor="smtp-host">SMTP host</Label>
           <Input
@@ -548,10 +602,12 @@ export function NotificationsCard() {
         <p className="text-xs text-muted">
           Applies to every reminder. A rule's own text may contain HTML — <code>&lt;b&gt;</code>,{' '}
           <code>&lt;span style="color:#c00"&gt;</code>, <code>&lt;img src="https://…"&gt;</code> —
-          for anything these four do not cover. A plain-text copy is sent alongside for clients
+          for anything these do not cover. Space Grotesk only renders as itself where the
+          reader has it installed — mail clients do not fetch web fonts — so the message
+          falls back to the next name in its stack. A plain-text copy is sent alongside for clients
           that will not show HTML, so nothing depends on the markup arriving.
         </p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <Label htmlFor="mail-font">Font</Label>
             <Select
@@ -580,26 +636,18 @@ export function NotificationsCard() {
               ))}
             </Select>
           </div>
-          <div>
-            <Label htmlFor="mail-color">Text colour</Label>
-            <Input
-              id="mail-color"
-              type="color"
-              className="h-10 p-1"
-              value={smtp.mailTextColor}
-              onChange={(e) => void patch({ mailTextColor: e.target.value })}
-            />
-          </div>
-          <div>
-            <Label htmlFor="mail-accent">Link colour</Label>
-            <Input
-              id="mail-accent"
-              type="color"
-              className="h-10 p-1"
-              value={smtp.mailAccentColor}
-              onChange={(e) => void patch({ mailAccentColor: e.target.value })}
-            />
-          </div>
+          <ColorField
+            id="mail-color"
+            label="Text colour"
+            value={smtp.mailTextColor}
+            onCommit={(value) => void patch({ mailTextColor: value })}
+          />
+          <ColorField
+            id="mail-accent"
+            label="Link colour"
+            value={smtp.mailAccentColor}
+            onCommit={(value) => void patch({ mailAccentColor: value })}
+          />
         </div>
         <div className="flex items-center justify-between gap-4">
           <Label className="mb-0">

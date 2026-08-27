@@ -156,6 +156,19 @@ length for forms and lists. A dashboard is not either of those — past that cap
 full width stopped growing and the rest of the monitor stayed empty, so the dashboard routes (admin
 and public alike) drop the cap and the twelve columns are spread across whatever width there is.
 
+**Tasks and Settings are two columns wide.** Both were capped at 672px, which is a comfortable
+measure for prose and a waste of a monitor for a form. Settings pairs its short cards and gives the
+long one the full width; Tasks puts the new-task form in a sticky column beside the list, because
+it is the same eight fields whatever the window is and stacking it on top pushed the list — the
+thing you came to look at — below the fold.
+
+**Filtering tasks.** By course, by who the task applies to, and by date. Sorting by date drops the
+course/section grouping rather than sorting inside it: the whole point is to see what is due next
+across everything, and the heading that carried the course name goes with it, so the card names its
+own course instead. The sort key is the occurrence in force if it has passed, otherwise the next
+one — past dates are smaller numbers, so overdue work rises to the top without a second rule
+saying so. The filters appear once there are more than three tasks; below that they are furniture.
+
 **The task picker follows Moodle, top to bottom.** Sections in Moodle's order, and the activities
 inside a section in the order they appear on the course page — not alphabetically. Anyone setting
 due dates has the Moodle course open in the other tab, and two lists in two different orders is a

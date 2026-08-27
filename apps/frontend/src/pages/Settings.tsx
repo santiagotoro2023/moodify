@@ -54,15 +54,19 @@ export default function Settings() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5">
       <h1 className="text-xl font-semibold">Settings</h1>
       {error ? <ErrorNote message={error} /> : null}
 
-      <ConnectionCard connection={connection} onChanged={load} />
-      <SyncCard connection={connection} onChanged={load} />
+      {/* Two columns of short cards, then the long one across the full width. items-start
+          keeps each card its own height instead of stretching both to the taller one. */}
+      <div className="grid items-start gap-5 lg:grid-cols-2">
+        <ConnectionCard connection={connection} onChanged={load} />
+        <SyncCard connection={connection} onChanged={load} />
+        <AccessCard publicBaseUrl={publicBaseUrl} onChanged={load} />
+        <BrandingCard logoUrl={logoUrl} logoHeight={logoHeight} onChanged={load} />
+      </div>
       <NotificationsCard />
-      <AccessCard publicBaseUrl={publicBaseUrl} onChanged={load} />
-      <BrandingCard logoUrl={logoUrl} logoHeight={logoHeight} onChanged={load} />
     </div>
   );
 }

@@ -682,6 +682,9 @@ export const MAIL_FONTS = [
   { id: 'sans', label: 'Sans (Helvetica)', stack: 'Helvetica, Arial, sans-serif' },
   { id: 'serif', label: 'Serif (Georgia)', stack: 'Georgia, "Times New Roman", serif' },
   { id: 'mono', label: 'Monospace', stack: '"SF Mono", Consolas, "Courier New", monospace' },
+  // Only renders as itself where the reader has it installed — mail clients do not fetch
+  // web fonts, Apple Mail aside. The fallback is what most inboxes will actually show.
+  { id: 'grotesk', label: 'Space Grotesk', stack: '"Space Grotesk", "Segoe UI", Helvetica, sans-serif' },
 ] as const;
 
 export type MailFont = (typeof MAIL_FONTS)[number]['id'];

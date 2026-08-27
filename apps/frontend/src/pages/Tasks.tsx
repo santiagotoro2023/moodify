@@ -73,6 +73,17 @@ const groupByCourseSection = (deadlines: readonly Deadline[]) =>
       : `${deadline.courseName} › ${deadline.section}`,
   );
 
+/**
+ * The date a task is actually about: the occurrence in force if it has passed, otherwise
+ * the next one. Past dates are smaller numbers, so sorting on this puts the overdue work
+ * at the top on its own, without a second comparator to say so. A task whose one-off date
+ * has gone and will not come round again sorts last rather than first.
+ */
+function dueKey(deadline: Deadline): number {
+  const at = deadline.dueAt ?? deadline.nextDueAt;
+  return at === null ? Number.POSITIVE_INFINITY : new Date(at).getTime();
+}
+
 /** Reads as the admin thinks of it — "5 days before" — not as the row is stored. */
 function ruleLabel(rule: NotificationRuleDto): string {
   const when = rule.kind === 'overdue' ? 'When overdue' : `${rule.daysBefore} days before`;
@@ -226,6 +237,10 @@ export default function Tasks() {
   const [busy, setBusy] = useState(false);
   const [rules, setRules] = useState<NotificationRuleDto[]>([]);
   const [sending, setSending] = useState<Deadline | null>(null);
+  const [byCourse, setByCourse] = useState('');
+  /** '' = everything, 'everyone' = the course-wide tasks, otherwise a cohort id. */
+  const [byCohort, setByCohort] = useState('');
+  const [sortBy, setSortBy] = useState<'moodle' | 'due'>('moodle');
 
   const [courseId, setCourseId] = useState('');
   const [cmid, setCmid] = useState('');
@@ -305,11 +320,31 @@ export default function Tasks() {
 
   const complete = courseId !== '' && cmid !== '';
 
+  const shown = (deadlines ?? []).filter(
+    (deadline) =>
+      (byCourse === '' || deadline.courseId === Number(byCourse)) &&
+      (byCohort === '' ||
+        (byCohort === 'everyone'
+          ? deadline.cohortId === null
+          : deadline.cohortId === Number(byCohort))),
+  );
+  // Sorting by date cuts across courses and sections, so the grouping that carries the
+  // course name has to go with it — one flat list, and the card names its own course.
+  const grouped: [string, Deadline[]][] =
+    sortBy === 'due'
+      ? [['Soonest first', [...shown].sort((a, b) => dueKey(a) - dueKey(b) || a.activityName.localeCompare(b.activityName))]]
+      : groupByCourseSection(shown);
+
   return (
-    <div className="mx-auto max-w-2xl space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5">
       <h1 className="text-xl font-semibold">Tasks</h1>
 
-      <Card className="space-y-4">
+      {/* The form is a fixed-width column beside the list rather than a block above it:
+          it is the same eight fields whatever the window is, and stacking it on top
+          pushed the thing you came to look at below the fold on a wide screen. It sticks,
+          so adding the tenth task does not mean scrolling back up for the form. */}
+      <div className="grid items-start gap-5 lg:grid-cols-[24rem_minmax(0,1fr)]">
+      <Card className="space-y-4 lg:sticky lg:top-20">
         <h2 className="flex items-center gap-2 font-medium">
           <CalendarClock className="h-4 w-4 text-muted" />
           New task
@@ -319,7 +354,7 @@ export default function Tasks() {
           External Service, then a full re-sync.
         </p>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3">
           <div>
             <Label htmlFor="dl-course">Course</Label>
             <Select id="dl-course" value={courseId} onChange={(e) => setCourseId(e.target.value)}>
@@ -468,6 +503,48 @@ export default function Tasks() {
         </Button>
       </Card>
 
+      <div className="space-y-5">
+      {/* Filters sit over the list, not over the page: they say nothing about the form
+          beside them, and a control that looks like it applies to both is worse than no
+          control. Hidden until there is more than a handful to sift through. */}
+      {deadlines !== null && deadlines.length > 3 ? (
+        <div className="grid gap-2 sm:grid-cols-3">
+          <Select
+            aria-label="Filter by course"
+            value={byCourse}
+            onChange={(e) => setByCourse(e.target.value)}
+          >
+            <option value="">All courses</option>
+            {courses.map((course) => (
+              <option key={course.id} value={course.id}>
+                {course.fullname}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label="Filter by who it applies to"
+            value={byCohort}
+            onChange={(e) => setByCohort(e.target.value)}
+          >
+            <option value="">Anyone</option>
+            <option value="everyone">Whole course only</option>
+            {cohorts.map((cohort) => (
+              <option key={cohort.id} value={cohort.id}>
+                {cohort.name}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label="Sort tasks"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value === 'due' ? 'due' : 'moodle')}
+          >
+            <option value="moodle">Moodle order</option>
+            <option value="due">Soonest due first</option>
+          </Select>
+        </div>
+      ) : null}
+
       {deadlines === null ? (
         <div className="grid place-items-center py-10">
           <Spinner className="h-8 w-8" />
@@ -478,19 +555,26 @@ export default function Tasks() {
           title="No tasks yet"
           hint="Nothing is being tracked against a date, so nothing can be overdue."
         />
+      ) : shown.length === 0 ? (
+        <EmptyState
+          icon={<CalendarClock className="h-6 w-6" />}
+          title="Nothing matches"
+          hint="No task fits the filters above."
+        />
       ) : (
-        groupByCourseSection(deadlines).map(([heading, items]) => (
+        grouped.map(([heading, items]) => (
           <section key={heading} className="space-y-2">
             <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-muted">
               {heading}
             </h2>
-            <ul className="space-y-2">
+            <ul className="grid gap-2 xl:grid-cols-2">
               {items.map((deadline) => (
                 <li key={deadline.id}>
                   <Card className="flex items-start gap-3 text-sm">
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{deadline.activityName}</p>
                       <p className="truncate text-xs text-muted">
+                        {sortBy === 'due' ? `${deadline.courseName} · ` : ''}
                         {deadline.cohortName ?? 'Everyone'} · {describeDeadlineRule(deadline)}
                       </p>
                       <p
@@ -532,6 +616,8 @@ export default function Tasks() {
           </section>
         ))
       )}
+      </div>
+      </div>
 
       {sending ? (
         <SendDialog deadline={sending} rules={rules} onClose={() => setSending(null)} />
