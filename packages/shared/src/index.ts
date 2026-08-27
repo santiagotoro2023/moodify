@@ -643,6 +643,12 @@ export const TEMPLATE_FIELDS = ['name', 'activity', 'course', 'due', 'days'] as 
 
 export interface SmtpState {
   enabled: boolean;
+  /** 'smtp' = a mail server. 'graph' = Microsoft 365, sending as the connected mailbox. */
+  transport: 'smtp' | 'graph';
+  graphTenantId: string;
+  graphClientId: string;
+  /** The connected mailbox, or null when nobody has signed in yet. */
+  graphAccount: string | null;
   host: string;
   port: number;
   secure: boolean;

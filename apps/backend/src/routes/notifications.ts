@@ -4,7 +4,17 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth.ts';
 import { encryptSecret } from '../crypto.ts';
 import { sql } from '../db.ts';
-import { loadSmtpConfig, sendMails, smtpIsUsable } from '../mail.ts';
+import {
+  GRAPH_SCOPE,
+  GraphError,
+  graphAccountOf,
+  graphAuthority,
+  graphToken,
+  loadSmtpConfig,
+  sendMails,
+  smtpIsUsable,
+  storeGraphRefreshToken,
+} from '../mail.ts';
 
 /**
  * SMTP configuration and the global reminder rules.
@@ -18,6 +28,9 @@ const idParam = z.object({ id: z.coerce.number().int().positive() });
 
 const smtpBodySchema = z.object({
   enabled: z.boolean().optional(),
+  transport: z.enum(['smtp', 'graph']).optional(),
+  graphTenantId: z.string().trim().max(100).optional(),
+  graphClientId: z.string().trim().max(100).optional(),
   host: z.string().trim().max(255).optional(),
   port: z.number().int().min(1).max(65535).optional(),
   secure: z.boolean().optional(),
@@ -70,6 +83,11 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/notifications/smtp', auth, async (): Promise<SmtpState> => {
     const { rows } = await sql<{
       enabled: boolean;
+      transport: string;
+      graph_tenant_id: string;
+      graph_client_id: string;
+      graph_account: string | null;
+      connected: boolean;
       host: string;
       port: number;
       secure: boolean;
@@ -83,7 +101,9 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
       last_sent_at: Date | null;
       last_error: string | null;
     }>(
-      `select enabled, host, port, secure, username, password_encrypted, from_name, from_email,
+      `select enabled, transport, graph_tenant_id, graph_client_id, graph_account,
+              graph_refresh_token_encrypted is not null as connected,
+              host, port, secure, username, password_encrypted, from_name, from_email,
               admin_email, daily_report, daily_report_hour, last_sent_at, last_error
          from smtp_settings order by id limit 1`,
     );
@@ -103,6 +123,12 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
 
     return {
       enabled: row?.enabled ?? false,
+      transport: row?.transport === 'graph' ? 'graph' : 'smtp',
+      graphTenantId: row?.graph_tenant_id ?? '',
+      graphClientId: row?.graph_client_id ?? '',
+      // The account only counts as connected while the token behind it still exists;
+      // showing an address after a disconnect would claim mail can go out when it cannot.
+      graphAccount: row?.connected ? row.graph_account : null,
       host: row?.host ?? '',
       port: row?.port ?? 587,
       secure: row?.secure ?? false,
@@ -133,6 +159,9 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
 
     await sql(
       `update smtp_settings set
+         transport          = coalesce($12, transport),
+         graph_tenant_id    = coalesce($13, graph_tenant_id),
+         graph_client_id    = coalesce($14, graph_client_id),
          enabled            = coalesce($1, enabled),
          host               = coalesce($2, host),
          port               = coalesce($3, port),
@@ -159,8 +188,103 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
         body.adminEmail ?? null,
         body.dailyReport ?? null,
         body.dailyReportHour ?? null,
+        body.transport ?? null,
+        body.graphTenantId ?? null,
+        body.graphClientId ?? null,
       ],
     );
+    return { ok: true };
+  });
+
+  // -------------------------------------------------------------------------
+  // Microsoft 365 sign-in, device code flow.
+  //
+  // Device code rather than a redirect: Moodify may be reachable only on a LAN, behind a
+  // proxy, or on a host with no name Microsoft would accept as a reply URL, and none of
+  // that matters if the browser never has to come back. It also keeps the app
+  // registration to two fields the admin can paste, with no redirect URI to agree on.
+  //
+  // The device code is handed to the browser and passed back on each poll. It is not a
+  // credential — it is worthless without the sign-in that only the admin can complete,
+  // it dies in fifteen minutes, and these routes need an admin session anyway.
+  // -------------------------------------------------------------------------
+
+  app.post('/api/notifications/graph/start', auth, async (request, reply) => {
+    const parsed = z
+      .object({ tenantId: z.string().trim().min(1).max(100), clientId: z.string().trim().min(1).max(100) })
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'A directory (tenant) id and an application (client) id are required.' });
+    }
+    const { tenantId, clientId } = parsed.data;
+
+    let data: Record<string, unknown>;
+    try {
+      const response = await fetch(graphAuthority(tenantId, 'devicecode'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: clientId, scope: GRAPH_SCOPE }),
+      });
+      data = (await response.json()) as Record<string, unknown>;
+      if (!response.ok) {
+        return reply.code(502).send({
+          error: typeof data.error_description === 'string' ? data.error_description : 'Microsoft refused the request.',
+        });
+      }
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : 'Could not reach Microsoft.' });
+    }
+
+    // Stored now so the poll can find them, and so the pair survives a page reload.
+    await sql(`update smtp_settings set graph_tenant_id = $1, graph_client_id = $2`, [tenantId, clientId]);
+
+    return {
+      deviceCode: String(data.device_code ?? ''),
+      userCode: String(data.user_code ?? ''),
+      verificationUri: String(data.verification_uri ?? 'https://microsoft.com/devicelogin'),
+      interval: typeof data.interval === 'number' ? data.interval : 5,
+    };
+  });
+
+  app.post('/api/notifications/graph/poll', auth, async (request, reply) => {
+    const parsed = z.object({ deviceCode: z.string().min(1).max(2000) }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Start the sign-in first.' });
+
+    const { rows } = await sql<{ graph_tenant_id: string; graph_client_id: string }>(
+      `select graph_tenant_id, graph_client_id from smtp_settings order by id limit 1`,
+    );
+    const row = rows[0];
+    if (row === undefined || row.graph_tenant_id === '' || row.graph_client_id === '') {
+      return reply.code(400).send({ error: 'Start the sign-in first.' });
+    }
+
+    try {
+      const tokens = await graphToken(row.graph_tenant_id, {
+        client_id: row.graph_client_id,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: parsed.data.deviceCode,
+      });
+      // Checked before storing: writing null would clear a working connection.
+      if (tokens.refreshToken === null) {
+        return reply.code(502).send({
+          error: 'Microsoft returned no refresh token. Add the offline_access permission to the app registration.',
+        });
+      }
+      const account = await graphAccountOf(tokens.accessToken);
+      await storeGraphRefreshToken(tokens.refreshToken, account);
+      await sql(`update smtp_settings set transport = 'graph', last_error = null`);
+      return { pending: false, account };
+    } catch (err) {
+      if (err instanceof GraphError && (err.code === 'authorization_pending' || err.code === 'slow_down')) {
+        return { pending: true, account: null };
+      }
+      return reply.code(400).send({ error: err instanceof Error ? err.message : 'Sign-in failed.' });
+    }
+  });
+
+  app.post('/api/notifications/graph/disconnect', auth, async () => {
+    await storeGraphRefreshToken(null, null);
+    await sql(`update smtp_settings set graph_account = null`);
     return { ok: true };
   });
 
@@ -169,8 +293,14 @@ export async function notificationRoutes(app: FastifyInstance): Promise<void> {
     if (!to.success) return reply.code(400).send({ error: 'A recipient address is required.' });
 
     const config = await loadSmtpConfig();
+    // Read before the guard: smtpIsUsable narrows the failing branch to null.
+    const wantsGraph = config?.transport === 'graph';
     if (!smtpIsUsable(config)) {
-      return reply.code(400).send({ error: 'Set at least a host and a from-address first.' });
+      return reply.code(400).send({
+        error: wantsGraph
+          ? 'Connect a Microsoft 365 mailbox first.'
+          : 'Set at least a host and a from-address first.',
+      });
     }
     const result = await sendMails(config, [
       {

@@ -124,6 +124,150 @@ function RuleEditor({
   );
 }
 
+interface DeviceCode {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  interval: number;
+}
+
+/**
+ * Microsoft 365 sign-in, in three fields and one code.
+ *
+ * The admin registers an app in their own directory and pastes its two ids — neither is
+ * a secret; a public client id is meant to be seen. Signing in then happens on
+ * Microsoft's own page, so no password ever passes through Moodify, and what comes back
+ * can do exactly one thing: send mail as the person who signed in. Nothing here needs a
+ * tenant-wide setting changed, which is the whole reason this exists beside SMTP.
+ */
+function GraphConnection({
+  smtp,
+  device,
+  busy,
+  onField,
+  onDevice,
+  onError,
+  onDisconnected,
+}: {
+  smtp: SmtpState;
+  device: DeviceCode | null;
+  busy: boolean;
+  onField: (key: keyof SmtpState, value: string) => void;
+  onDevice: (device: DeviceCode | null) => void;
+  onError: (message: string) => void;
+  onDisconnected: () => Promise<void>;
+}) {
+  const [starting, setStarting] = useState(false);
+
+  const start = async () => {
+    setStarting(true);
+    try {
+      onDevice(
+        await api.post<DeviceCode>('/api/notifications/graph/start', {
+          tenantId: smtp.graphTenantId,
+          clientId: smtp.graphClientId,
+        }),
+      );
+    } catch (err) {
+      onError(errorMessage(err));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  if (device !== null) {
+    return (
+      <div className="space-y-2 rounded-xl border border-edge bg-ground-soft px-3 py-3 text-sm">
+        <p>
+          Open{' '}
+          <a
+            href={device.verificationUri}
+            target="_blank"
+            rel="noreferrer"
+            className="text-accent underline underline-offset-2"
+          >
+            {device.verificationUri}
+          </a>{' '}
+          and enter this code:
+        </p>
+        <p className="text-2xl font-semibold tracking-[0.2em] tabular-nums">{device.userCode}</p>
+        <p className="flex items-center gap-2 text-xs text-muted">
+          <Spinner className="h-3.5 w-3.5" />
+          Waiting for you to finish signing in. Sign in with the mailbox the reminders
+          should come from.
+        </p>
+        <Button variant="subtle" size="sm" onClick={() => onDevice(null)}>
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  if (smtp.graphAccount !== null) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-ground-soft px-3 py-2">
+        <p className="text-sm">
+          Sending as <span className="font-medium">{smtp.graphAccount}</span>
+          <span className="mt-0.5 block text-xs text-muted">
+            Mail goes out as this mailbox. The from-name and from-address above are not
+            used — a delegated sign-in cannot send as anyone else.
+          </span>
+        </p>
+        <Button
+          variant="subtle"
+          size="sm"
+          onClick={() =>
+            void api
+              .post('/api/notifications/graph/disconnect')
+              .then(onDisconnected)
+              .catch((err: unknown) => onError(errorMessage(err)))
+          }
+        >
+          Disconnect
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <Label htmlFor="graph-tenant">Directory (tenant) ID</Label>
+          <Input
+            id="graph-tenant"
+            value={smtp.graphTenantId}
+            placeholder="00000000-0000-0000-0000-000000000000"
+            onChange={(e) => onField('graphTenantId', e.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="graph-client">Application (client) ID</Label>
+          <Input
+            id="graph-client"
+            value={smtp.graphClientId}
+            placeholder="00000000-0000-0000-0000-000000000000"
+            onChange={(e) => onField('graphClientId', e.target.value)}
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted">
+        Both come from your app registration in Microsoft Entra: a single-tenant app with
+        public client flows allowed and the delegated Graph permissions{' '}
+        <code>Mail.Send</code>, <code>User.Read</code> and <code>offline_access</code>. No
+        redirect URI and no client secret are needed.
+      </p>
+      <Button
+        onClick={() => void start()}
+        disabled={busy || starting || smtp.graphTenantId.trim() === '' || smtp.graphClientId.trim() === ''}
+      >
+        {starting ? <Spinner className="h-4 w-4" /> : null}
+        Connect mailbox
+      </Button>
+    </div>
+  );
+}
+
 export function NotificationsCard() {
   const [smtp, setSmtp] = useState<SmtpState | null>(null);
   const [rules, setRules] = useState<NotificationRuleDto[]>([]);
@@ -134,6 +278,8 @@ export function NotificationsCard() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Set while a Microsoft sign-in is waiting on the human at microsoft.com/devicelogin. */
+  const [device, setDevice] = useState<DeviceCode | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -152,6 +298,30 @@ export function NotificationsCard() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Microsoft's own interval, honoured because polling faster earns a slow_down and then
+  // a hard refusal. The code expires by itself, at which point the poll returns the
+  // reason and this stops.
+  useEffect(() => {
+    if (device === null) return;
+    const timer = setInterval(() => {
+      void api
+        .post<{ pending: boolean; account: string | null }>('/api/notifications/graph/poll', {
+          deviceCode: device.deviceCode,
+        })
+        .then(async (result) => {
+          if (result.pending) return;
+          setDevice(null);
+          await load();
+          setNote(`Connected as ${result.account ?? 'the signed-in mailbox'}.`);
+        })
+        .catch((err: unknown) => {
+          setDevice(null);
+          setError(errorMessage(err));
+        });
+    }, Math.max(3, device.interval) * 1000);
+    return () => clearInterval(timer);
+  }, [device, load]);
 
   if (smtp === null) {
     return (
@@ -208,6 +378,30 @@ export function NotificationsCard() {
         </p>
       ) : null}
 
+      <div>
+        <Label htmlFor="mail-transport">Send through</Label>
+        <Select
+          id="mail-transport"
+          value={smtp.transport}
+          onChange={(e) => void patch({ transport: e.target.value })}
+        >
+          <option value="smtp">An SMTP server</option>
+          <option value="graph">Microsoft 365 (my mailbox)</option>
+        </Select>
+      </div>
+
+      {smtp.transport === 'graph' ? (
+        <GraphConnection
+          smtp={smtp}
+          device={device}
+          busy={busy}
+          onField={field}
+          onDevice={setDevice}
+          onError={setError}
+          onDisconnected={load}
+        />
+      ) : (
+      <>
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <Label htmlFor="smtp-host">SMTP host</Label>
@@ -291,6 +485,8 @@ export function NotificationsCard() {
         {busy ? <Spinner className="h-4 w-4" /> : null}
         Save server settings
       </Button>
+      </>
+      )}
 
       <div className="border-t border-edge pt-4">
         <Label htmlFor="smtp-test">Send a test message</Label>

@@ -388,6 +388,31 @@ The SMTP password is encrypted at rest with the same key as the Moodle token, is
 is write-only from the UI's side. A mail server that is down never fails a sync or raises the Moodle
 banner; the error lands in Settings.
 
+**Microsoft 365 without a tenant administrator.** Mail can go out through Graph instead of SMTP,
+as one signed-in mailbox. This exists because the SMTP route into Exchange Online is closing:
+Microsoft is retiring basic authentication for client submission, and everything that keeps
+`smtp.office365.com` working — tenant-wide basic auth, per-mailbox `SmtpClientAuthenticationDisabled`
+— is an administrator setting, not something a mailbox owner can grant themselves. A delegated
+OAuth token is the opposite: the owner grants it to themselves and it can do exactly one thing,
+send mail as them.
+
+Setup is an app registration in Entra (single tenant, public client flows allowed, delegated
+`Mail.Send`, `User.Read` and `offline_access`) and its two ids pasted into Settings. Neither is a
+secret — a public client id is published to browsers by design — and there is no client secret at
+all. Sign-in uses the **device code** flow rather than a redirect, because Moodify may be reachable
+only on a LAN or behind a proxy under a name Microsoft would not accept as a reply URL; with device
+code the browser never has to come back, and the app registration needs no redirect URI.
+
+Two things follow from the token being *delegated*. Mail always goes out as the connected mailbox,
+so the from-name and from-address fields do not apply — Graph will not let a delegated token send
+as anyone else. And Microsoft rotates the refresh token on nearly every use, so the new one is
+stored each time; keeping the original would work right up until it expired, months later, for no
+visible reason. The refresh token is encrypted with the same key as everything else and is never
+returned to the frontend, which only learns which address is connected.
+
+The one thing outside the mailbox owner's control is their tenant's user-consent policy: if it
+requires administrator approval for `Mail.Send`, the consent screen will say so at sign-in.
+
 **Profile picture resolution.** `core_enrol_get_enrolled_users` always reports the `f1` variant,
 100px, which is visibly soft once a ring fills a wide column. The avatar download asks for `f3`
 first — the 250px retina variant Moodle has generated since 3.2 — and falls back through the other
