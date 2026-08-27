@@ -40,10 +40,13 @@ export interface PlannedMail {
   ruleId: number;
   userId: number;
   email: string;
-  /** The occurrence this is about, yyyy-mm-dd. Part of the no-duplicates key. */
-  dueOn: string;
-  /** Every task the mail covers, so all of them can be logged as sent. */
-  deadlineIds: number[];
+  /**
+   * Every task the mail covers, each with the occurrence it is about — together the
+   * no-duplicates key. Per task rather than per mail because an overdue mail gathers
+   * several due dates into one message, and logging them all under the earliest would
+   * make the others look unsent and mail them again next pass.
+   */
+  sent: { deadlineId: number; dueOn: string }[];
   subject: string;
   text: string;
 }
@@ -78,9 +81,14 @@ function sentKey(ruleId: number, deadlineId: number, userId: number, dueOn: stri
  * Decides what to send. Pure, so the interesting part — who gets mail, when, and never
  * twice — is testable without an SMTP server or a database.
  *
- * Grouping is by (rule, person, due date). Three activities due the same day become one
- * mail listing all three; two due on different days stay two mails, because {due} in the
- * template has to mean something.
+ * Grouping is by (rule, person, due date) — three activities due the same day become one
+ * mail listing all three, and two due on different days stay two mails, because {due} in
+ * the template has to mean something.
+ *
+ * Overdue is the exception: it groups by (rule, person) alone. Work goes overdue on
+ * whatever day it was due, so grouping those by date would mail somebody once per missed
+ * deadline — five mails in one pass for the student who most needs one clear list. {due}
+ * is then the oldest of them, and every bullet carries its own date so nothing is lost.
  */
 export function planNotifications(
   rules: readonly NotificationRule[],
@@ -88,11 +96,12 @@ export function planNotifications(
   alreadySent: ReadonlySet<string>,
   now: Date,
 ): PlannedMail[] {
+  type Item = { candidate: Candidate; dueAt: Date; dueOn: string };
   type Group = {
     rule: NotificationRule;
     candidate: Candidate;
-    items: Candidate[];
-    dueOn: string;
+    items: Item[];
+    /** The oldest occurrence in the group, which is what {due} and {days} report. */
     dueAt: Date;
   };
   const groups = new Map<string, Group>();
@@ -113,12 +122,16 @@ export function planNotifications(
       const dueOn = isoDay(dueAt);
       if (alreadySent.has(sentKey(rule.id, item.deadlineId, item.userId, dueOn))) continue;
 
-      const key = `${rule.id}:${item.userId}:${dueOn}`;
+      const key =
+        rule.kind === 'overdue'
+          ? `${rule.id}:${item.userId}`
+          : `${rule.id}:${item.userId}:${dueOn}`;
       const group = groups.get(key);
       if (group === undefined) {
-        groups.set(key, { rule, candidate: item, items: [item], dueOn, dueAt });
+        groups.set(key, { rule, candidate: item, items: [{ candidate: item, dueAt, dueOn }], dueAt });
       } else {
-        group.items.push(item);
+        group.items.push({ candidate: item, dueAt, dueOn });
+        if (dueAt < group.dueAt) group.dueAt = dueAt;
       }
     }
   }
@@ -128,11 +141,26 @@ export function planNotifications(
     const email = group.candidate.email;
     if (email === null) continue;
 
-    const items = [...group.items].sort((a, b) => a.activityName.localeCompare(b.activityName));
+    // Oldest first, then by name. For a "before" rule every item shares one date, so
+    // this is the alphabetical order it always was.
+    const items = [...group.items].sort(
+      (a, b) =>
+        a.dueAt.getTime() - b.dueAt.getTime() ||
+        a.candidate.activityName.localeCompare(b.candidate.activityName),
+    );
+    const spread = new Set(items.map((item) => item.dueOn)).size > 1;
     const values = {
       name: group.candidate.fullname,
-      activity: items.map((item) => `• ${item.activityName} (${item.courseName})`).join('\n'),
-      course: [...new Set(items.map((item) => item.courseName))].join(', '),
+      activity: items
+        .map(({ candidate, dueAt }) =>
+          // Only when they differ: repeating one date down every line of a "due Friday"
+          // mail is noise.
+          spread
+            ? `• ${candidate.activityName} (${candidate.courseName}) — due ${formatDay(dueAt)}`
+            : `• ${candidate.activityName} (${candidate.courseName})`,
+        )
+        .join('\n'),
+      course: [...new Set(items.map((item) => item.candidate.courseName))].join(', '),
       due: formatDay(group.dueAt),
       days: String(Math.max(0, daysBetween(now, group.dueAt))),
     };
@@ -141,15 +169,14 @@ export function planNotifications(
       ruleId: group.rule.id,
       userId: group.candidate.userId,
       email,
-      dueOn: group.dueOn,
-      deadlineIds: items.map((item) => item.deadlineId),
+      sent: items.map((item) => ({ deadlineId: item.candidate.deadlineId, dueOn: item.dueOn })),
       // A subject holding the bullet list would be unreadable, so a multi-item mail says
       // how many instead of naming one of them and hiding the rest.
       subject: renderTemplate(group.rule.subject, {
         ...values,
         activity:
           items.length === 1
-            ? (items[0]?.activityName ?? '')
+            ? (items[0]?.candidate.activityName ?? '')
             : `${items.length} activities`,
       }),
       text: renderTemplate(group.rule.body, values),
@@ -319,9 +346,15 @@ export async function runNotifications(logger: FastifyBaseLogger): Promise<void>
     }
     await sql(
       `insert into notification_log (rule_id, deadline_id, moodle_user_id, due_on)
-       select $1, id, $3, $4::date from unnest($2::int[]) as id
+       select $1, item.id, $4, item.due::date
+         from unnest($2::int[], $3::text[]) as item(id, due)
        on conflict do nothing`,
-      [mail.ruleId, mail.deadlineIds, mail.userId, mail.dueOn],
+      [
+        mail.ruleId,
+        mail.sent.map((item) => item.deadlineId),
+        mail.sent.map((item) => item.dueOn),
+        mail.userId,
+      ],
     );
   }
   if (planned.length > 0) {

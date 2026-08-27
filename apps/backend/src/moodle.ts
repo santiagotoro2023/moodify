@@ -663,6 +663,8 @@ export interface CourseModule {
   section: string;
   /** Position of that section in the course, so a list can follow Moodle's own order. */
   sectionOrder: number;
+  /** Position of the activity itself, counted across the whole course in Moodle's order. */
+  order: number;
 }
 
 /** A section of a course, named as it will appear everywhere else. */
@@ -739,6 +741,11 @@ export function parseCourseContents(raw: unknown): {
   const out: CourseSection[] = [];
   const modules: CourseModule[] = [];
   let order = 0;
+  // Moodle returns sections in course order and each section's modules in the order they
+  // appear on the page, so walking the response IS the course order. Recording the walk
+  // is the only way to get it back later — nothing else in the response says where an
+  // activity sits, and name order is a different course from the one anyone is looking at.
+  let activityOrder = 0;
   for (const section of sections) {
     order += 1;
     const name = sectionLabel(section, order);
@@ -759,12 +766,14 @@ export function parseCourseContents(raw: unknown): {
       if (modname === 'subsection') continue;
       const completion = readNumber(entry, 'completion');
       if (completion === 0) continue;
+      activityOrder += 1;
       modules.push({
         cmid,
         name: readString(entry, 'name') ?? `Activity ${cmid}`,
         modname,
         section: label,
         sectionOrder: order,
+        order: activityOrder,
       });
     }
   }
@@ -1119,5 +1128,27 @@ if (process.argv[1]?.endsWith('moodle.ts')) {
   assert.deepEqual(contents.modules.map((module) => [module.name, module.section]), [
     ['ISO/OSI', 'Grundkurse › Woche 2'],
   ]);
+
+  // Within a section, Moodle's order — not the alphabet. "Zuerst" comes first because it
+  // is first on the page, which is the whole point of carrying the position across.
+  const ordered = parseCourseContents([
+    {
+      section: 1,
+      name: 'Woche 1',
+      modules: [
+        { id: 10, name: 'Zuerst', modname: 'page', completion: 1 },
+        { id: 11, name: 'Aufgabe', modname: 'assign', completion: 2 },
+      ],
+    },
+    { section: 2, name: 'Woche 2', modules: [{ id: 12, name: 'Abschluss', modname: 'quiz', completion: 1 }] },
+  ]);
+  assert.deepEqual(
+    ordered.modules.map((module) => [module.name, module.sectionOrder, module.order]),
+    [
+      ['Zuerst', 1, 1],
+      ['Aufgabe', 1, 2],
+      ['Abschluss', 2, 3],
+    ],
+  );
   console.log('moodle.ts self-check ok');
 }

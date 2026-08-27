@@ -48,7 +48,7 @@ test('a lead-time rule fires inside its window and not outside it', () => {
   assert.equal(inside.length, 1);
   assert.equal(inside[0]?.subject, 'Due soon: ISO/OSI');
   assert.match(inside[0]?.text ?? '', /in 3 day\(s\)/);
-  assert.equal(inside[0]?.dueOn, '2026-03-13');
+  assert.deepEqual(inside[0]?.sent, [{ deadlineId: 1, dueOn: '2026-03-13' }]);
 
   // Same rule, a date three weeks out: nothing yet.
   const outside = planNotifications(
@@ -83,7 +83,10 @@ test('activities due the same day become one mail, other days stay separate', ()
   assert.match(together[0]?.text ?? '', /• ISO\/OSI \(Netzwerktechnik\)/);
   assert.match(together[0]?.text ?? '', /• Subnetting \(Netzwerktechnik\)/);
   // Both are logged, so neither can be re-sent by the next pass.
-  assert.deepEqual(together[0]?.deadlineIds, [1, 2]);
+  assert.deepEqual(together[0]?.sent, [
+    { deadlineId: 1, dueOn: '2026-03-13' },
+    { deadlineId: 2, dueOn: '2026-03-13' },
+  ]);
 
   const apart = planNotifications(
     [BEFORE],
@@ -103,9 +106,46 @@ test('an overdue rule fires on a date that has passed, not on one still ahead', 
   );
   assert.equal(past.length, 1);
   assert.equal(past[0]?.subject, 'Overdue: ISO/OSI');
-  assert.equal(past[0]?.dueOn, '2026-03-01');
+  assert.deepEqual(past[0]?.sent, [{ deadlineId: 1, dueOn: '2026-03-01' }]);
 
   assert.deepEqual(planNotifications([OVERDUE], [candidate()], new Set(), NOW), []);
+});
+
+test('everything overdue reaches one person in one mail, oldest first', () => {
+  const planned = planNotifications(
+    [OVERDUE],
+    [
+      candidate({ deadlineId: 2, activityName: 'Subnetting', rule: { date: '2026-03-05' } }),
+      candidate({ rule: { date: '2026-03-01' } }),
+    ],
+    new Set(),
+    NOW,
+  );
+  // One mail, not one per missed deadline — the whole point of grouping overdue by person.
+  assert.equal(planned.length, 1);
+  assert.equal(planned[0]?.subject, 'Overdue: 2 activities');
+  // {due} is the oldest of them, and each line carries its own date because they differ.
+  assert.match(planned[0]?.text ?? '', /• ISO\/OSI \(Netzwerktechnik\) — due 01\/03\/2026/);
+  assert.match(planned[0]?.text ?? '', /• Subnetting \(Netzwerktechnik\) — due 05\/03\/2026/);
+  // Each is logged under its own date: logging both under the oldest would leave the
+  // 5th looking unsent and mail it again on the next pass.
+  assert.deepEqual(planned[0]?.sent, [
+    { deadlineId: 1, dueOn: '2026-03-01' },
+    { deadlineId: 2, dueOn: '2026-03-05' },
+  ]);
+
+  // And the one already logged drops out, leaving the other on its own.
+  const rest = planNotifications(
+    [OVERDUE],
+    [
+      candidate({ deadlineId: 2, activityName: 'Subnetting', rule: { date: '2026-03-05' } }),
+      candidate({ rule: { date: '2026-03-01' } }),
+    ],
+    new Set(['2:1:7:2026-03-01']),
+    NOW,
+  );
+  assert.equal(rest.length, 1);
+  assert.equal(rest[0]?.subject, 'Overdue: Subnetting');
 });
 
 test('a yearly rule notifies again the next time it comes round', () => {
@@ -114,5 +154,5 @@ test('a yearly rule notifies again the next time it comes round', () => {
   const sent = new Set(['2:1:7:2025-09-01']);
   const planned = planNotifications([OVERDUE], [yearly], sent, new Date(2026, 9, 1));
   assert.equal(planned.length, 1);
-  assert.equal(planned[0]?.dueOn, '2026-09-07');
+  assert.deepEqual(planned[0]?.sent, [{ deadlineId: 1, dueOn: '2026-09-07' }]);
 });

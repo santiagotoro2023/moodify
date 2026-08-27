@@ -156,6 +156,14 @@ length for forms and lists. A dashboard is not either of those — past that cap
 full width stopped growing and the rest of the monitor stayed empty, so the dashboard routes (admin
 and public alike) drop the cap and the twelve columns are spread across whatever width there is.
 
+**The task picker follows Moodle, top to bottom.** Sections in Moodle's order, and the activities
+inside a section in the order they appear on the course page — not alphabetically. Anyone setting
+due dates has the Moodle course open in the other tab, and two lists in two different orders is a
+transcription error waiting to happen. Position is recorded during the same walk of
+`core_course_get_contents` that resolves section names, since nothing else in the response says
+where an activity sits. Rows written before this fall back to name order until the next full
+discovery.
+
 **Unconfigured widgets.** A widget is created with nothing selected and reports what it still
 needs. Requiring a course before a widget could be added made three of the five impossible to add
 at all.
@@ -380,7 +388,13 @@ different thing from last year's. Rows are written only for mail that actually l
 failed is retried — a duplicate is a smaller problem than a reminder nobody ever gets.
 
 Several activities falling due on the same day for the same person become one message; different
-days stay separate, because `{due}` in a template has to mean something. Days are counted midnight
+days stay separate, because `{due}` in a template has to mean something. **Overdue is the
+exception**: work goes overdue on whatever day it happened to be due, so grouping those by date
+would mail the student with five missed deadlines five times in one pass — exactly the person who
+needs one clear list instead. An overdue mail therefore groups by person alone, `{due}` reports the
+oldest of them, and each bullet carries its own date. The log still records every task under *its
+own* date, not the group's; logging them all under the oldest would leave the later ones looking
+unsent and mail them again on the next pass. Days are counted midnight
 to midnight rather than by subtracting instants — a deadline is stored as the *end* of its day, so
 the raw difference would say "in 4 days" on the calendar's third.
 

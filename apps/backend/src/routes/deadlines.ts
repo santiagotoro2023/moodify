@@ -164,9 +164,10 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
     const parsed = courseIdParam.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: 'Invalid course id.' });
 
-    // Moodle's own section order, then the activity name inside it: the picker groups by
-    // section, and a group whose rows are alphabetical but whose headings are not is
-    // harder to scan than either done consistently.
+    // Moodle's own order, top to bottom, sections and the activities inside them alike:
+    // this list exists to be matched against the course page in the other browser tab.
+    // activity_order is 0 on rows written before it existed, so name is the tie-break
+    // until the next full discovery fills them in.
     const { rows } = await sql<{
       cmid: number;
       name: string;
@@ -177,7 +178,7 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
       `select cmid, name, modname, section, section_order
          from course_activities
         where moodle_course_id = $1
-        order by section_order asc, name asc`,
+        order by section_order asc, activity_order asc, name asc`,
       [parsed.data.courseId],
     );
     const activities: CourseActivity[] = rows.map((row) => ({
@@ -204,7 +205,7 @@ export async function deadlineRoutes(app: FastifyInstance): Promise<void> {
            on ca.moodle_course_id = d.moodle_course_id and ca.cmid = d.cmid
          left join cohorts ch on ch.moodle_cohort_id = d.moodle_cohort_id
         order by co.fullname asc, ca.section_order asc, ca.section asc,
-                 ca.name asc, ch.name asc nulls first`,
+                 ca.activity_order asc, ca.name asc, ch.name asc nulls first`,
     );
     const now = new Date();
     return rows.map((row) => toDeadline(row, now));

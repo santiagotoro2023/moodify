@@ -664,15 +664,24 @@ async function syncCourseActivities(ctx: RunContext, courseId: number): Promise<
   for (const module of modules) {
     await sql(
       `insert into course_activities
-         (moodle_course_id, cmid, name, modname, section, section_order, last_seen_at)
-       values ($1, $2, $3, $4, $5, $6, now())
+         (moodle_course_id, cmid, name, modname, section, section_order, activity_order, last_seen_at)
+       values ($1, $2, $3, $4, $5, $6, $7, now())
        on conflict (moodle_course_id, cmid) do update
-          set name          = excluded.name,
-              modname       = excluded.modname,
-              section       = excluded.section,
-              section_order = excluded.section_order,
-              last_seen_at  = now()`,
-      [courseId, module.cmid, module.name, module.modname, module.section, module.sectionOrder],
+          set name           = excluded.name,
+              modname        = excluded.modname,
+              section        = excluded.section,
+              section_order  = excluded.section_order,
+              activity_order = excluded.activity_order,
+              last_seen_at   = now()`,
+      [
+        courseId,
+        module.cmid,
+        module.name,
+        module.modname,
+        module.section,
+        module.sectionOrder,
+        module.order,
+      ],
     );
   }
 }
