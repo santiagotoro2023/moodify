@@ -378,16 +378,19 @@ async function loadDeadlineFacts(
  * behind the fill, for someone who had missed it. Completion and deadline compliance are
  * different axes; projecting one onto the other produced a number that meant nothing.
  *
- * Null when the two coincide: a mark drawn on the end of the fill says nothing, and that
- * is the ordinary case of somebody exactly on schedule.
+ * Drawn even when it coincides with the fill. It used to be suppressed there, on the
+ * grounds that a mark on the end of the fill says nothing — but that also hid it for
+ * everybody who had not started yet and had nothing due, so the one group most worth
+ * showing a plan to was the one group that never saw one. Null only when the segment
+ * tracks nothing at all, where there is no scale to put a mark on.
  */
 export function targetPercent(
   facts: DeadlineFacts,
   activitiesCompleted: number,
   activitiesTotal: number,
 ): number | null {
+  if (activitiesTotal === 0) return null;
   const shift = facts.overdue - facts.earlyDone;
-  if (shift === 0 || activitiesTotal === 0) return null;
   const scheduled = Math.min(Math.max(activitiesCompleted + shift, 0), activitiesTotal);
   return Math.round((scheduled / activitiesTotal) * 10000) / 100;
 }

@@ -18,6 +18,8 @@ interface PublicDashboardRow {
   name: string;
   title_left: string | null;
   title_right: string | null;
+  title_gap: number | null;
+  logo_height: number | null;
   background_image_path: string | null;
   anonymize_on_public: boolean;
 }
@@ -31,7 +33,8 @@ interface PublicDashboardRow {
  */
 async function dashboardForToken(token: string): Promise<PublicDashboardRow | null> {
   const { rows } = await sql<PublicDashboardRow>(
-    `select id, name, title_left, title_right, background_image_path, anonymize_on_public
+    `select id, name, title_left, title_right, title_gap, logo_height,
+            background_image_path, anonymize_on_public
        from dashboards
       where public_share_token = $1 and is_public = true`,
     [token],
@@ -165,6 +168,8 @@ export async function publicRoutes(app: FastifyInstance): Promise<void> {
       name: row.name,
       titleLeft: row.title_left,
       titleRight: row.title_right,
+      titleGap: row.title_gap,
+      logoHeight: row.logo_height,
       backgroundImagePath: row.background_image_path,
       isPublic: true,
       // Never echo the secret back into a page that gets screenshotted or embedded.

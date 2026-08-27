@@ -1048,8 +1048,9 @@ export function WidgetConfigForm({
                 A short pink tick, centred in the segment's width, for how far the person
                 would be if they had done exactly the work whose date has come round —
                 ahead of the fill when something is overdue, behind it when something was
-                finished early. Nothing is drawn for a course with no tasks, or for
-                someone exactly on schedule.
+                finished early, and on the end of it when they are exactly on schedule.
+                Somebody who has not started yet gets it at the very beginning of the
+                segment. Only a segment with no completion-tracked activities gets none.
               </span>
             </Label>
             <Switch

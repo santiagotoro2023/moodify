@@ -70,6 +70,13 @@ const BADGE_SIZE: Record<BadgeSize, { icon: string; text: string; pad: string; t
   large: { icon: 'h-16 w-16', text: 'text-base', pad: 'p-2 pr-4', track: '15rem' },
 };
 
+/** Name size when the badges are packed into fixed columns — one step down from BADGE_SIZE. */
+const BADGE_TEXT_TIGHT: Record<BadgeSize, string> = {
+  small: 'text-[10px]',
+  medium: 'text-xs',
+  large: 'text-sm',
+};
+
 /** Widget configs are stored as opaque JSON; only the display fields matter here. */
 function densityOf(config: unknown): Density {
   const value = (config as { density?: unknown } | null)?.density;
@@ -189,6 +196,9 @@ function BadgeList({
     return <p className="text-xs text-muted">No badges yet</p>;
   }
   const { icon, text, pad, track } = BADGE_SIZE[badgeSize];
+  // Two badges to a row leaves each name about half the width it had, so the text drops a
+  // step: the chip is the same size, the name just wraps onto fewer lines.
+  const nameText = columns === undefined ? text : BADGE_TEXT_TIGHT[badgeSize];
   // A fixed count wins over the track width: two columns means two columns even when the
   // tile is narrow enough that auto-fill would drop to one.
   const template =
@@ -212,7 +222,7 @@ function BadgeList({
             title={badge.customDescription ?? badge.description ?? badge.name}
           >
             <BadgeImage badge={badge} size={icon} />
-            <span className={cn('leading-snug', text, 'min-w-0 break-words')}>{badge.name}</span>
+            <span className={cn('leading-snug', nameText, 'min-w-0 break-words')}>{badge.name}</span>
           </Chip>
         </li>
       ))}

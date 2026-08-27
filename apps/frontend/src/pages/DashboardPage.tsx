@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { WIDGET_TYPES, type Dashboard, type WidgetType } from '@moodify/shared';
+import {
+  DEFAULT_LOGO_HEIGHT,
+  DEFAULT_TITLE_GAP,
+  WIDGET_TYPES,
+  type Dashboard,
+  type WidgetType,
+} from '@moodify/shared';
 import { Copy, Plus, RefreshCw, Settings2, ShieldAlert, Trash2 } from 'lucide-react';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, Card, Dialog, ErrorNote, Input, Label, Spinner, Switch } from '@/ui';
@@ -286,6 +292,8 @@ function DashboardSettingsDialog({
   const [name, setName] = useState(dashboard.name);
   const [titleLeft, setTitleLeft] = useState(dashboard.titleLeft ?? '');
   const [titleRight, setTitleRight] = useState(dashboard.titleRight ?? '');
+  const [titleGap, setTitleGap] = useState(String(dashboard.titleGap ?? DEFAULT_TITLE_GAP));
+  const [logoHeight, setLogoHeight] = useState(String(dashboard.logoHeight ?? ''));
   const [error, setError] = useState<string | null>(null);
   const [confirmShare, setConfirmShare] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState('');
@@ -293,6 +301,8 @@ function DashboardSettingsDialog({
   useEffect(() => setName(dashboard.name), [dashboard.name]);
   useEffect(() => setTitleLeft(dashboard.titleLeft ?? ''), [dashboard.titleLeft]);
   useEffect(() => setTitleRight(dashboard.titleRight ?? ''), [dashboard.titleRight]);
+  useEffect(() => setTitleGap(String(dashboard.titleGap ?? DEFAULT_TITLE_GAP)), [dashboard.titleGap]);
+  useEffect(() => setLogoHeight(String(dashboard.logoHeight ?? '')), [dashboard.logoHeight]);
 
   const patch = async (body: Record<string, unknown>) => {
     try {
@@ -342,16 +352,51 @@ function DashboardSettingsDialog({
             onChange={(e) => setTitleRight(e.target.value)}
           />
         </div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="dash-gap">Space either side of the logo (px)</Label>
+            <Input
+              id="dash-gap"
+              type="number"
+              min={0}
+              max={400}
+              value={titleGap}
+              onChange={(e) => setTitleGap(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="dash-logo-h">Logo height on this dashboard (px)</Label>
+            <Input
+              id="dash-logo-h"
+              type="number"
+              min={8}
+              max={400}
+              value={logoHeight}
+              placeholder={`Site default (${DEFAULT_LOGO_HEIGHT})`}
+              onChange={(e) => setLogoHeight(e.target.value)}
+            />
+          </div>
+        </div>
         <Button
           variant="subtle"
           className="mt-2"
-          onClick={() => void patch({ titleLeft, titleRight })}
+          onClick={() =>
+            void patch({
+              titleLeft,
+              titleRight,
+              // Blank means "back to the default", which the API reads as null.
+              titleGap: titleGap === '' ? null : Number(titleGap),
+              logoHeight: logoHeight === '' ? null : Number(logoHeight),
+            })
+          }
         >
           Save headings
         </Button>
         <p className="mt-1 text-xs text-muted">
-          The logo sits centred between them, on this page and on the share link. Leave
-          either one blank to show nothing on that side.
+          The logo sits centred between the two headings, on this page and on the share
+          link. Leave a heading blank to show nothing on that side, and the logo height
+          blank to use the site logo size from Settings. The headings scale with the logo,
+          so one number resizes the whole row.
         </p>
       </div>
 

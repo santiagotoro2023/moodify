@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import RGL, { WidthProvider, type Layout } from 'react-grid-layout';
-import { DEFAULT_LOGO_HEIGHT, type Dashboard, type Widget } from '@moodify/shared';
+import { DEFAULT_LOGO_HEIGHT, DEFAULT_TITLE_GAP, type Dashboard, type Widget } from '@moodify/shared';
 import { ChevronDown, ChevronUp, Settings2, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
 import { Button, Dialog } from '@/ui';
@@ -65,35 +65,49 @@ export function StickyBackground({ imageUrl }: { imageUrl: string | null }) {
 /**
  * The heading above the grid: the logo dead centre, with a heading either side of it.
  *
- * A three-column grid with equal outer tracks, not a flex row — the logo has to sit on
- * the page's centre line whatever the two headings say, and with flex it drifts towards
- * whichever side has less text. The dashboard's own name is not here; that stays the
- * internal label on the tab.
+ * `1fr auto 1fr`, not three equal columns. Equal columns centre the logo inside a track a
+ * third of the page wide, so a short heading pinned to the end of the track next to it
+ * still sat a screen's width away — which is not what "beside the logo" means. With the
+ * middle track shrunk to the logo, the only space between them is the gap, and the equal
+ * outer tracks still put the logo on the page's centre line whatever the headings say.
+ *
+ * Both the gap and the logo height are per dashboard: one built for a wall display wants
+ * a far bigger logo than the one in the admin top bar.
  */
 export function DashboardHeading({
   dashboard,
   logoUrl,
   logoHeight,
 }: {
-  dashboard: Pick<Dashboard, 'titleLeft' | 'titleRight'>;
+  dashboard: Pick<Dashboard, 'titleLeft' | 'titleRight' | 'titleGap' | 'logoHeight'>;
   logoUrl: string | null | undefined;
+  /** The site-wide logo height, used when the dashboard sets none of its own. */
   logoHeight: number | null | undefined;
 }) {
+  const height = dashboard.logoHeight ?? logoHeight ?? DEFAULT_LOGO_HEIGHT;
   return (
-    <div className="mb-5 grid grid-cols-3 items-center gap-4">
-      <h1 className="justify-self-end text-right text-lg font-semibold sm:text-xl">
+    <div
+      className="mb-5 grid items-center"
+      style={{
+        gridTemplateColumns: '1fr auto 1fr',
+        columnGap: `${dashboard.titleGap ?? DEFAULT_TITLE_GAP}px`,
+      }}
+    >
+      {/* Same family as everything else on a ring tile, just heavier — the heading is a
+          louder version of the type the dashboard is already set in, not a second voice. */}
+      <h1 className="justify-self-end text-right font-bold tracking-tight" style={{ fontSize: `${Math.round(height * 0.6)}px` }}>
         {dashboard.titleLeft}
       </h1>
       <img
         src={logoUrl || DEFAULT_LOGO}
         alt="Moodify"
         className="w-auto max-w-full justify-self-center"
-        style={{ height: `${logoHeight ?? DEFAULT_LOGO_HEIGHT}px` }}
+        style={{ height: `${height}px` }}
         onError={(event) => {
           event.currentTarget.src = DEFAULT_LOGO;
         }}
       />
-      <h1 className="justify-self-start text-left text-lg font-semibold sm:text-xl">
+      <h1 className="justify-self-start text-left font-bold tracking-tight" style={{ fontSize: `${Math.round(height * 0.6)}px` }}>
         {dashboard.titleRight}
       </h1>
     </div>

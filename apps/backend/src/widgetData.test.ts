@@ -501,9 +501,12 @@ test('the target mark sits ahead of the fill by exactly the overdue work', () =>
   // front of it. The first version divided due deadlines by activity count and put the
   // mark at 10% — behind the fill, for someone who had missed three deadlines.
   assert.equal(targetPercent(facts, 12, 40), 37.5);
-  // Nothing overdue and nothing early: the mark would land exactly on the end of the fill
-  // and say nothing.
-  assert.equal(targetPercent({ ...facts, overdue: 0 }, 12, 40), null);
+  // Nothing overdue and nothing early: the mark lands exactly on the end of the fill.
+  // Still drawn — suppressing it also hid the plan from anyone who had not started.
+  assert.equal(targetPercent({ ...facts, overdue: 0 }, 12, 40), 30);
+  // Nothing done and nothing due yet: the plan is the start of the segment, and saying
+  // so is the whole point of the mark for someone who has not begun.
+  assert.equal(targetPercent({ ...facts, overdue: 0 }, 0, 40), 0);
   // It can never point past a full ring.
   assert.equal(targetPercent(facts, 39, 40), 100);
 
@@ -511,7 +514,7 @@ test('the target mark sits ahead of the fill by exactly the overdue work', () =>
   // before their date puts the mark two behind the fill, at 25% against a 30% fill.
   assert.equal(targetPercent({ ...facts, overdue: 0, earlyDone: 2 }, 12, 40), 25);
   // Missing as much as they finished early is being exactly on schedule.
-  assert.equal(targetPercent({ ...facts, overdue: 2, earlyDone: 2 }, 12, 40), null);
+  assert.equal(targetPercent({ ...facts, overdue: 2, earlyDone: 2 }, 12, 40), 30);
   // And it can never point behind the start of the ring.
   assert.equal(targetPercent({ ...facts, overdue: 0, earlyDone: 9 }, 4, 40), 0);
 });

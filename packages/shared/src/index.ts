@@ -449,6 +449,10 @@ export interface Dashboard {
    */
   titleLeft: string | null;
   titleRight: string | null;
+  /** Gap in px between each title and the logo. Null = DEFAULT_TITLE_GAP. */
+  titleGap: number | null;
+  /** Logo height in px above this dashboard only. Null = the site-wide logo height. */
+  logoHeight: number | null;
   backgroundImagePath: string | null;
   isPublic: boolean;
   publicShareToken: string | null;
@@ -495,6 +499,15 @@ export interface BootstrapState {
 }
 
 export const DEFAULT_LOGO_HEIGHT = 32;
+
+/**
+ * Space between the logo and each heading beside it, in px.
+ *
+ * Small on purpose: the three read as one heading, not as three things that happen to
+ * share a row. The outer grid tracks are what centre the logo, so this is the only gap
+ * that is actually visible.
+ */
+export const DEFAULT_TITLE_GAP = 16;
 
 // ---------------------------------------------------------------------------
 // Widget data payloads — what GET /api/widgets/:id/data returns per type.
@@ -606,8 +619,7 @@ export interface RingSegment extends RingLegendItem {
   percent: number | null;
   /**
    * Where the fill would reach with nothing overdue — completed work plus the work whose
-   * date has passed. Null when nothing is overdue, since the mark would then sit exactly
-   * on the end of the fill.
+   * date has passed. Null only when the segment tracks no activities at all.
    */
   targetPercent: number | null;
   overdue: number;

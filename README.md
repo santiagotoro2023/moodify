@@ -567,8 +567,13 @@ editable through the API — it is simply never painted.
 
 **Two headings, one centred logo.** A dashboard's `name` is the internal label on its tab. What a
 viewer sees above the grid is the logo on the page's centre line with `title_left` and `title_right`
-either side of it, on the admin page and the share link alike. It is a three-column grid with equal
-outer tracks rather than a flex row, so the logo stays centred whatever the two headings say.
+either side of it, on the admin page and the share link alike. The grid is `1fr auto 1fr`, not three
+equal columns: equal columns centre the logo inside a track a third of the page wide, so a short
+heading pinned to the end of the track beside it still sat a screen's width away. With the middle
+track shrunk to the logo, `title_gap` is the only space between them — and the equal outer tracks
+still hold the logo on the centre line whatever the headings say. `logo_height` overrides the site
+logo size for this dashboard alone, since a wall display wants a far bigger mark than the admin top
+bar, and the headings are sized from it so one number resizes the whole row.
 
 **Badges: descriptions, order and the pop-up.** Clicking a badge under a progress ring opens a
 pop-up with the badge at full size, its name, and the description written for it on the **Badges**
@@ -584,7 +589,10 @@ and a transformed ancestor makes `position: fixed` resolve against *it* rather t
 rendered in place, the overlay would be trapped inside the widget it came from and clipped by it.
 
 **The ring's schedule mark.** A short pink tick, half the segment's stroke width and centred in it,
-at 75% opacity. It used to be a full-width white rule, which read as a cut through the ring — a
+at 75% opacity. It is drawn even when it lands exactly on the end of the fill. Suppressing it there
+looked like a tidy-up — the mark says nothing new when you are exactly on schedule — but it also
+hid the plan from everyone who had not started and had nothing due yet, which is the one group a
+plan is most worth showing. Now the only segment without a mark is one that tracks no activities. It used to be a full-width white rule, which read as a cut through the ring — a
 louder statement than "here is the plan". Segment colours accept any six-digit hex now, entered
 beside the curated swatches; the swatches remain the offer, not the limit. There is no legend above
 the wall of rings: every tile carries its own, in the middle of the ring or in the rows beneath it.
