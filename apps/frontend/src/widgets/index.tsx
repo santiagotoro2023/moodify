@@ -1236,6 +1236,10 @@ function PersonRing({
           {entry.user.fullname}
         </p>
       )}
+      {/* Its own breathing room, top and bottom: the status is the one line that belongs
+          to neither the ring nor the legend, and with only the tile's gap around it it
+          reads as part of whichever it happens to sit closest to. */}
+      <div className="my-1.5 w-full text-center">
       {entry.overdue > 0 ? (
         <div className="w-full text-left text-[11px] text-bad">
           <p className="font-medium">Overdue:</p>
@@ -1257,6 +1261,7 @@ function PersonRing({
         // others shifts everything below it out of alignment across the grid.
         <p className="text-[11px] text-muted">On track</p>
       )}
+      </div>
       {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} rows={rows} /> : null}
       {options.showBadges ? (
         <div className="mt-3 w-full">
