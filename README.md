@@ -419,10 +419,30 @@ replacement drops in behind the same two props. The body is rendered twice from 
 once with HTML values and once with plain ones, rather than kept as two templates, because the copy
 nobody previews is the copy that rots. Styles are inlined on a wrapper at send time: mail clients
 discard `<style>` blocks, and a link with no inline colour gets the client's own blue, so links
-that carry no style of their own are given the accent colour on the way out. A newline becomes a
+that carry no style of their own are given the accent colour on the way out.
+
+That wrapper sets font, size and colours and *nothing* else. It used to paint a white card on a
+grey page, the way a marketing mail does; in a real inbox that reads as a grey box drawn around
+the message, since the client already supplies the page. It is worse in a dark-mode client, which
+inverts the chrome and leaves the light panel sitting in it, and worse again where the tenant
+appends a signature inside the body — the panel stops where Moodify's content stops and the
+signature hangs outside it. A newline becomes a
 `<br>` unless it follows a tag, where it is source formatting rather than a break somebody asked
 for. There is no footer and no signature: both are things an admin can put in the template and
 then cannot take out again.
+
+**Marked as automated.** Every reminder carries `X-Moodify: task-reminder` and
+`X-Auto-Response-Suppress: All`, plus `Auto-Submitted: auto-generated` over SMTP (Graph refuses any
+custom header not starting with `X-`). The suppression headers stop one reminder collecting thirty
+out-of-office replies. `X-Moodify` exists for a different reason: a tenant-side signature or
+disclaimer rule appends *after* the message has left, and no sender can opt out of a transport rule
+from the outside — but an exception matching that header excludes exactly these messages and
+nothing else.
+
+**The friendly name.** Over Graph the address is fixed to the connected mailbox, because a
+delegated token cannot send as anyone else, but the display name is the sender's to choose, so the
+*From name* setting applies on both transports. A class-wide reminder arriving under a person's own
+name reads as a personal message from them.
 
 **Images travel with the message.** Uploaded into the editor, referenced by their Moodify URL so
 the editor can show them, and rewritten to `cid:` attachments when the mail goes out. A remote

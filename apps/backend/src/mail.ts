@@ -322,27 +322,45 @@ export const mimeForPath = (path: string): string =>
   MIME_BY_EXT[path.split('.').pop() ?? ''] ?? 'application/octet-stream';
 
 /**
- * Wraps a body fragment in the configured look.
+ * Wraps a body fragment in the configured look: font, size and colours, and nothing else.
  *
- * Inline styles on every element, and a table-free single column: mail clients strip
- * <style> blocks, ignore stylesheets, and Outlook re-flows anything clever. The shell is
- * deliberately plain so the admin's own HTML in the body decides everything else — there
- * is no footer, no logo and no signature here, because every one of those is something
- * the admin can put in the template and then cannot take out again.
+ * It used to paint a white card on a grey page, the way a marketing mail does. In an
+ * actual inbox that reads as a grey box drawn around the message — the client already
+ * supplies the page, so a second one inside it is just a panel. Worse in a dark-mode
+ * client, which inverts the surrounding chrome and leaves the light panel sitting in it,
+ * and worse again where the tenant appends a signature *inside* the body: the panel stops
+ * where Moodify's content stops and the signature hangs outside it.
+ *
+ * So: no background, no padding, no border, no max-width. Inline styles rather than a
+ * <style> block, which mail clients discard.
  */
 export function wrapHtmlMail(config: SmtpConfig, body: string): string {
   const font = mailFontStack(config.mailFont);
-  return [
-    `<div style="margin:0;padding:24px;background:#f5f7fa">`,
-    `<div style="max-width:600px;margin:0 auto;padding:28px;background:#ffffff;border-radius:14px;`,
-    `font-family:${font};font-size:${config.mailFontSize}px;line-height:1.55;color:${config.mailTextColor}">`,
+  return (
+    `<div style="font-family:${font};font-size:${config.mailFontSize}px;` +
+    `line-height:1.55;color:${config.mailTextColor}">` +
     // A mail client applies its own blue to any <a> that does not say otherwise, and it
     // will not read a <style> block to find out. Only links that carry no style of their
     // own are touched, so an admin who styled one in the body keeps it.
-    `<div>${body.replace(/<a\s+(?![^>]*\bstyle=)/gi, `<a style="color:${config.mailAccentColor}" `)}</div>`,
-    `</div></div>`,
-  ].join('');
+    body.replace(/<a\s+(?![^>]*\bstyle=)/gi, `<a style="color:${config.mailAccentColor}" `) +
+    `</div>`
+  );
 }
+
+/**
+ * Headers that say "a machine sent this, on nobody's behalf".
+ *
+ * None of them can stop a tenant-side signature or disclaimer rule — that appending
+ * happens in Exchange, after the message has left, and no sender can opt out of a
+ * transport rule from the outside. What they do is give the rule something to match on:
+ * an exception for `X-Moodify` excludes exactly these messages and nothing else. The
+ * suppression headers are honoured more widely, and stop a reminder from collecting
+ * out-of-office replies from thirty students.
+ */
+const AUTOMATED_HEADERS: Record<string, string> = {
+  'X-Moodify': 'task-reminder',
+  'X-Auto-Response-Suppress': 'All',
+};
 
 /**
  * A newline in the body becomes a line break, unless it sits straight after a tag.
@@ -387,6 +405,16 @@ async function sendViaGraph(
         body: JSON.stringify({
           message: {
             subject: mail.subject,
+            // Same mailbox, different display name. A delegated token cannot send *as*
+            // anyone else, but the friendly name is the sender's to choose, and a class
+            // reminder arriving under a person's own name reads as a personal message.
+            ...(config.graphAccount === null
+              ? {}
+              : { from: { emailAddress: { name: config.fromName, address: config.graphAccount } } }),
+            internetMessageHeaders: Object.entries(AUTOMATED_HEADERS).map(([name, value]) => ({
+              name,
+              value,
+            })),
             // Graph carries one body, not two: HTML when there is any, text otherwise.
             body:
               mail.html === undefined
@@ -472,6 +500,12 @@ async function sendViaSmtp(
         to: mail.to,
         subject: mail.subject,
         text: mail.text,
+        headers: {
+          ...AUTOMATED_HEADERS,
+          // The standard one, and the only transport that can carry it: Graph refuses any
+          // custom header not starting with X-.
+          'Auto-Submitted': 'auto-generated',
+        },
         ...(mail.html === undefined ? {} : { html: mail.html }),
         attachments: mail.images.map((image) => ({
           filename: image.path.split('/').pop(),

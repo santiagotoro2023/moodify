@@ -414,8 +414,9 @@ function GraphConnection({
         <p className="text-sm">
           Sending as <span className="font-medium">{smtp.graphAccount}</span>
           <span className="mt-0.5 block text-xs text-muted">
-            Mail goes out as this mailbox. The from-name and from-address above are not
-            used — a delegated sign-in cannot send as anyone else.
+            The address is fixed to this mailbox — a delegated sign-in cannot send as
+            anyone else — but the <em>From name</em> above is used, so reminders arrive
+            from "Moodify" rather than under your own name.
           </span>
         </p>
         <Button
@@ -619,6 +620,23 @@ export function NotificationsCard() {
       </div>
 
       {smtp.transport === 'graph' ? (
+        <>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="graph-from-name">From name</Label>
+            <Input
+              id="graph-from-name"
+              value={smtp.fromName}
+              placeholder="Moodify"
+              onChange={(e) => field('fromName', e.target.value)}
+              onBlur={() => void patch({ fromName: smtp.fromName })}
+            />
+            <p className="mt-1 text-xs text-muted">
+              The friendly name recipients see. The address itself is the connected
+              mailbox and cannot be changed.
+            </p>
+          </div>
+        </div>
         <GraphConnection
           smtp={smtp}
           device={device}
@@ -628,6 +646,7 @@ export function NotificationsCard() {
           onError={setError}
           onDisconnected={load}
         />
+        </>
       ) : (
       <>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -752,7 +771,9 @@ export function NotificationsCard() {
         <p className="text-xs text-muted">
           Applies to every reminder. A rule's own text may contain HTML — <code>&lt;b&gt;</code>,{' '}
           <code>&lt;span style="color:#c00"&gt;</code>, <code>&lt;img src="https://…"&gt;</code> —
-          for anything these do not cover. Space Grotesk only renders as itself where the
+          for anything these do not cover. Nothing is drawn around the message — no panel,
+          no border, no footer — so it looks like a normal mail rather than a web page
+          pasted into one. Space Grotesk only renders as itself where the
           reader has it installed — mail clients do not fetch web fonts — so the message
           falls back to the next name in its stack. A plain-text copy is sent alongside for clients
           that will not show HTML, so nothing depends on the markup arriving.
