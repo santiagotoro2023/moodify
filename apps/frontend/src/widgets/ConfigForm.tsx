@@ -4,6 +4,7 @@ import {
   RING_COLOR_LABELS,
   SECTION_SEPARATOR,
   type BadgeAdmin,
+  type BadgeSection,
   type Cohort,
   type Course,
   type CourseSection,
@@ -11,7 +12,7 @@ import {
   type RingSectionSplit,
   type Widget,
 } from '@moodify/shared';
-import { ArrowDown, ArrowUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
 import { ringColorAt } from './index';
 import { Button, ErrorNote, Input, Label, Select, Spinner, Switch } from '@/ui';
@@ -579,6 +580,94 @@ export function WidgetConfigForm({
     ...ringBadgePool.filter((badge) => !ringBadgeOrder.includes(badge.id)),
   ];
 
+  const ringSections: BadgeSection[] = Array.isArray(config.badgeSections)
+    ? (config.badgeSections as BadgeSection[])
+    : [];
+  const setBadgeSections = (next: BadgeSection[]) => set('badgeSections', next);
+  /** Membership is exclusive, so assigning drops the badge from wherever it was. */
+  const assignBadge = (badgeId: number, to: number | null) =>
+    setBadgeSections(
+      ringSections.map((section, index) => ({
+        ...section,
+        badgeIds:
+          index === to
+            ? [...section.badgeIds.filter((id) => id !== badgeId), badgeId]
+            : section.badgeIds.filter((id) => id !== badgeId),
+      })),
+    );
+  const sectionOf = (badgeId: number) =>
+    ringSections.findIndex((section) => section.badgeIds.includes(badgeId));
+  const moveSection = (index: number, by: number) => {
+    const next = [...ringSections];
+    const moved = next[index];
+    const displaced = next[index + by];
+    if (moved === undefined || displaced === undefined) return;
+    next[index] = displaced;
+    next[index + by] = moved;
+    setBadgeSections(next);
+  };
+
+  const ringSectionPicker = () => (
+    <div>
+      <Label>Badge sections</Label>
+      <p className="mb-2 text-xs text-muted">
+        Optional headings the badges are grouped under, drawn top to bottom in this order.
+        Anything you leave unassigned sits underneath them all, with no heading.
+      </p>
+      <div className="space-y-1">
+        {ringSections.map((section, index) => (
+          <div key={index} className="flex items-center gap-2">
+            <Input
+              value={section.name}
+              placeholder="Section name"
+              onChange={(e) =>
+                setBadgeSections(
+                  ringSections.map((item, at) =>
+                    at === index ? { ...item, name: e.target.value } : item,
+                  ),
+                )
+              }
+            />
+            <button
+              type="button"
+              aria-label={`Move section ${index + 1} up`}
+              disabled={index === 0}
+              onClick={() => moveSection(index, -1)}
+              className="shrink-0 rounded-md p-1 text-muted hover:bg-surface hover:text-ink disabled:opacity-30"
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label={`Move section ${index + 1} down`}
+              disabled={index === ringSections.length - 1}
+              onClick={() => moveSection(index, 1)}
+              className="shrink-0 rounded-md p-1 text-muted hover:bg-surface hover:text-ink disabled:opacity-30"
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete section ${index + 1}`}
+              onClick={() => setBadgeSections(ringSections.filter((_, at) => at !== index))}
+              className="shrink-0 rounded-md p-1 text-muted hover:bg-surface hover:text-bad"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        className="mt-1"
+        onClick={() => setBadgeSections([...ringSections, { name: '', badgeIds: [] }])}
+      >
+        <Plus className="h-4 w-4" /> Add section
+      </Button>
+    </div>
+  );
+
   const moveBadge = (index: number, by: number) => {
     const next = ringBadgesOrdered.map((badge) => badge.id);
     const target = index + by;
@@ -610,6 +699,23 @@ export function WidgetConfigForm({
               <span className="min-w-0 flex-1 truncate" title={badge.courseName ?? 'Site-wide badge'}>
                 {badge.name}
               </span>
+              {ringSections.length === 0 ? null : (
+                <Select
+                  aria-label={`Section for ${badge.name}`}
+                  className="w-28 shrink-0"
+                  value={String(sectionOf(badge.id))}
+                  onChange={(e) =>
+                    assignBadge(badge.id, Number(e.target.value) < 0 ? null : Number(e.target.value))
+                  }
+                >
+                  <option value="-1">No section</option>
+                  {ringSections.map((section, at) => (
+                    <option key={at} value={at}>
+                      {section.name === '' ? `Section ${at + 1}` : section.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
               <button
                 type="button"
                 aria-label={`Move ${badge.name} up`}
@@ -1089,6 +1195,7 @@ export function WidgetConfigForm({
               onCheckedChange={(v) => set('showBadges', v)}
             />
           </div>
+          {config.showBadges === true ? ringSectionPicker() : null}
           {config.showBadges === true ? ringBadgeOrderPicker() : null}
           {staffToggle()}
           {excludePicker()}

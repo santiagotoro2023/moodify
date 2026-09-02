@@ -290,6 +290,21 @@ export const completionRingsConfig = z.object({
    * a badge created in Moodle after the order was set appears rather than vanishing.
    */
   badgeOrder: z.array(z.number().int().positive()).max(200).default([]),
+  /**
+   * Named groups of badges, laid out top to bottom in this array's order, with anything
+   * unassigned following underneath. A badge named by two sections belongs to the first
+   * that claims it; order inside a section is `badgeOrder`, so one sequence still drives
+   * the whole layout.
+   */
+  badgeSections: z
+    .array(
+      z.object({
+        name: z.string().trim().max(60),
+        badgeIds: z.array(z.number().int().positive()).max(200),
+      }),
+    )
+    .max(20)
+    .default([]),
   badgeSize,
   includeStaff: z.boolean().default(false),
   excludeUserIds,
@@ -509,6 +524,40 @@ export const DEFAULT_LOGO_HEIGHT = 32;
  * share a row. The outer grid tracks are what centre the logo, so this is the only gap
  * that is actually visible.
  */
+export interface BadgeSection {
+  name: string;
+  badgeIds: number[];
+}
+
+/**
+ * A person's badges split into the sections configured on the widget, in the configured
+ * order, with whatever no section claims trailing under a blank heading.
+ *
+ * Membership is exclusive — the first section to name a badge keeps it — so a badge
+ * listed twice cannot be drawn twice. Empty sections are dropped rather than left as a
+ * lonely heading: a section only describes badges, and with none of them held by this
+ * person it has nothing to say. Somebody with no badges at all still gets one unnamed
+ * group, which is what renders the "no badges yet" line.
+ */
+export function badgeSectionsOf(
+  badges: Badge[],
+  sections: readonly BadgeSection[],
+): { name: string; badges: Badge[] }[] {
+  if (sections.length === 0) return [{ name: '', badges }];
+  const claimed = new Set<number>();
+  const groups = sections.map((section) => ({
+    name: section.name,
+    badges: badges.filter((badge) => {
+      if (claimed.has(badge.id) || !section.badgeIds.includes(badge.id)) return false;
+      claimed.add(badge.id);
+      return true;
+    }),
+  }));
+  groups.push({ name: '', badges: badges.filter((badge) => !claimed.has(badge.id)) });
+  const filled = groups.filter((group) => group.badges.length > 0);
+  return filled.length === 0 ? [{ name: '', badges: [] }] : filled;
+}
+
 export const DEFAULT_TITLE_GAP = 16;
 
 /**

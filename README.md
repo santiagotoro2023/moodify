@@ -392,7 +392,10 @@ neighbours change.
 Everything inside — stroke, text, avatar — is expressed in viewBox units, so a tile scales as one
 piece. The per-course rows under each ring are a grid with fixed side columns padded out to the
 busiest person's course count, so the numbers line up across every tile and the badges start at the
-same height: a table read across a wall, without the ruled lines.
+same height: a table read across a wall, without the ruled lines. The padding rows are a
+non-breaking space at the row's own font size rather than a hand-set height — exactly as tall as a
+real row, where a hand-picked one was merely close, and the drift showed as badges sitting a pixel
+or two off their neighbours'.
 
 The tick inside a segment marks where the fill would reach with nothing overdue: work already done
 plus work whose date has passed. The gap between fill and tick is exactly the missing work, and the
@@ -401,9 +404,11 @@ the course's activity count, which put one missed task among forty activities at
 start of the segment, behind the fill, for the person who had missed it. Completion and deadline
 compliance are different axes; projecting one onto the other produced a number that meant nothing.
 
-Under the name, overdue activities are listed by name rather than counted: "1 overdue activity"
-says a problem exists and nothing about what to do. When nothing is overdue the line reads "on
-track", or names how much was finished before its date came round. The old percentage "ahead of
+Under the name, one chip: red with a cross counting the overdue activities, green with a tick
+counting what was finished ahead of its date, or a plain "on track". Overdue used to be spelled out
+by name — the more useful thing to read and the worse thing to look at, because the block grew with
+the backlog and every tile carrying one stood taller than its neighbours. The names live on in the
+chip's tooltip, where they cost no height. The old percentage "ahead of
 plan / behind plan" is gone with the target it was derived from — with per-activity dates there is
 no pace to be ahead of, only work done early.
 
@@ -583,6 +588,10 @@ list badges somebody has actually earned — Moodle exposes no endpoint for the 
 *has* (see the badge-discovery note above) — so a badge appears there the day it is first awarded.
 The rings widget lays badges out in two fixed columns, in an order set in its settings; anything not
 in that order follows alphabetically, so a newly awarded badge shows up rather than disappearing.
+Optional **sections** group them under headings drawn in the order the settings list them, with
+anything unassigned trailing underneath; membership is exclusive, and a section none of that
+person's badges belong to is dropped rather than left as a lonely heading. Order inside a section is
+still the badge order, so one sequence drives the whole layout.
 Two columns is the point — a person with fifteen badges has to stay a readable block, not a column
 fifteen rows tall — so the column width is not negotiable and the *text* is what gives: each name is
 set at whatever size makes its longest word fit on one line, down to an 8px floor. That is stated in

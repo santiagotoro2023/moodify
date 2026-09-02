@@ -26,6 +26,7 @@ import {
   TrendingUp,
   Trophy,
   User,
+  X,
 } from 'lucide-react';
 import type {
   BadgeSize,
@@ -35,6 +36,7 @@ import type {
   RingMarker,
   RingSize,
 } from '@moodify/shared';
+import { badgeSectionsOf, type BadgeSection } from '@moodify/shared';
 import { createPortal } from 'react-dom';
 import { api, assetUrl, cn, errorMessage } from '@/lib/api';
 import { Button, Dialog, EmptyState, ErrorNote, Spinner } from '@/ui';
@@ -225,6 +227,7 @@ function BadgeList({
   columns,
   tight,
   onSelect,
+  names,
 }: {
   badges: BadgeType[];
   badgeSize: BadgeSize;
@@ -235,13 +238,19 @@ function BadgeList({
   tight?: boolean;
   /** Makes each chip a button. Unset leaves them plain text, which is what most callers want. */
   onSelect?: (badge: BadgeType) => void;
+  /** Names the text scales against. Set it to a superset when several lists must match. */
+  names?: readonly string[];
 }) {
   if (badges.length === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
   const { icon, text, pad, track } = BADGE_SIZE[badgeSize];
   const grid = uniform || columns !== undefined;
-  const fontSize = badgeNameFontSize(badges.map((badge) => badge.name), badgeSize, tight === true);
+  const fontSize = badgeNameFontSize(
+    names ?? badges.map((badge) => badge.name),
+    badgeSize,
+    tight === true,
+  );
   const Chip = onSelect === undefined ? 'span' : 'button';
   return (
     <ul
@@ -1040,6 +1049,7 @@ interface RingOptions {
   showTarget: boolean;
   showBadges: boolean;
   badgeSize: BadgeSize;
+  badgeSections: BadgeSection[];
 }
 
 function ringOptionsOf(config: unknown): RingOptions {
@@ -1058,8 +1068,10 @@ function ringOptionsOf(config: unknown): RingOptions {
     showTarget: raw.showTarget !== false,
     showBadges: raw.showBadges === true,
     badgeSize: (badge === 'medium' || badge === 'large' ? badge : 'small') as BadgeSize,
+    badgeSections: Array.isArray(raw.badgeSections) ? (raw.badgeSections as BadgeSection[]) : [],
   };
 }
+
 
 /**
  * An arc of `r` around (cx, cy), from `from` to `to` in radians measured clockwise from
@@ -1076,8 +1088,11 @@ function arcPath(cx: number, cy: number, r: number, from: number, to: number): s
 /**
  * The verdict under the name.
  *
- * Overdue outranks everything and is spelled out: the activities by name, because "1
- * overdue activity" tells you a problem exists and nothing about what to do.
+ * Overdue outranks everything, as one red chip counting the activities. It used to list
+ * them by name, which was the more useful thing to read and the worse thing to look at:
+ * the block grew with the backlog, so the tiles it appeared on stood a line or four
+ * taller than the rest and the wall stopped lining up. The names live on in the chip's
+ * tooltip, where they cost no height.
  *
  * The old percentage-based "ahead of plan / behind plan" is gone. It was derived from a
  * target that projected deadline compliance onto the completion axis, which is not a
@@ -1132,9 +1147,15 @@ function SegmentRows({
           </dd>
         </Fragment>
       ))}
-      {/* Blank rows so every tile is the same height whatever its course count. */}
+      {/* Blank rows so every tile is the same height whatever its course count. A
+          non-breaking space rather than a height: the filler is the same font at the
+          same size as a real row, so it is exactly as tall as one — a hand-picked em
+          height was close but never equal, and the drift showed up as tiles whose
+          badges sat a pixel or two off from their neighbours'. */}
       {Array.from({ length: padding }, (_, index) => (
-        <span key={`pad-${index}`} className="col-span-4 h-[1.15em]" aria-hidden="true" />
+        <span key={`pad-${index}`} className="col-span-4" aria-hidden="true">
+          &nbsp;
+        </span>
       ))}
     </dl>
   );
@@ -1329,16 +1350,13 @@ function PersonRing({
           reads as part of whichever it happens to sit closest to. */}
       <div className="my-1.5 w-full text-center">
       {entry.overdue > 0 ? (
-        <div className="w-full text-left text-[11px] text-bad">
-          <p className="font-medium">Overdue:</p>
-          <ul className="list-inside list-disc">
-            {overdueActivities.map((name) => (
-              <li key={name} className="truncate" title={name}>
-                {name}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <p
+          className="inline-flex max-w-full items-center gap-1 rounded-full bg-bad/12 px-2 py-0.5 text-[11px] font-medium text-bad"
+          title={overdueActivities.join(', ')}
+        >
+          <X className="h-3 w-3 shrink-0" />
+          <span className="truncate">{overdueLabel(entry.overdue)}</span>
+        </p>
       ) : entry.earlyDone > 0 ? (
         <p className="inline-flex max-w-full items-center gap-1 rounded-full bg-good/12 px-2 py-0.5 text-[11px] font-medium text-good">
           <Check className="h-3 w-3 shrink-0" />
@@ -1352,15 +1370,28 @@ function PersonRing({
       </div>
       {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} rows={rows} /> : null}
       {options.showBadges ? (
-        <div className="mt-3 w-full">
-          <BadgeList
-            badges={entry.badges}
-            badgeSize={options.badgeSize}
-            uniform
-            columns={2}
-            tight
-            onSelect={onBadge}
-          />
+        <div className="mt-3 w-full space-y-2">
+          {badgeSectionsOf(entry.badges, options.badgeSections).map((section, index) => (
+            <div key={`${index}-${section.name}`}>
+              {section.name === '' ? null : (
+                <p className="mb-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted">
+                  {section.name}
+                </p>
+              )}
+              <BadgeList
+                badges={section.badges}
+                badgeSize={options.badgeSize}
+                uniform
+                columns={2}
+                tight
+                /* Every section on the tile sizes its text against the same set, so a
+                   section of short names does not end up in bigger type than the one
+                   above it. */
+                names={entry.badges.map((badge) => badge.name)}
+                onSelect={onBadge}
+              />
+            </div>
+          ))}
         </div>
       ) : null}
     </div>

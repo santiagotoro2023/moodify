@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import type {
+  Badge,
   BadgeCardsData,
   CompletionRingsData,
   CompletionTableData,
@@ -13,7 +14,7 @@ import type {
 } from '@moodify/shared';
 import { deadlineDueAt, deadlineNextDueAt, nthWeekdayOf } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
-import { sectionMatches } from '@moodify/shared';
+import { badgeSectionsOf, sectionMatches } from '@moodify/shared';
 import { foldDeadlines, foldEvents, orderBadges, ringComparator, targetPercent } from './widgetData.ts';
 
 /**
@@ -590,4 +591,41 @@ test('the badge order puts listed badges first and leaves the rest where they we
 
   // No order set at all is the identity.
   assert.deepEqual(orderBadges([...held], []).map((b) => b.name), ['Ada', 'Bea', 'Cal', 'Dot']);
+});
+
+const sectionBadge = (id: number, name: string): Badge => ({
+  id,
+  name,
+  description: null,
+  customDescription: null,
+  imageUrl: null,
+  courseId: null,
+});
+
+test('badgeSectionsOf groups in section order and trails the unassigned', () => {
+  const badges = [1, 2, 3].map((id) => sectionBadge(id, `b${id}`));
+  const grouped = badgeSectionsOf(badges, [
+    { name: 'Second', badgeIds: [2] },
+    // 2 again: the first section already claimed it, so this one only gets 3.
+    { name: 'Third', badgeIds: [2, 3] },
+  ]);
+  assert.deepEqual(
+    grouped.map((group) => [group.name, group.badges.map((badge) => badge.id)]),
+    [['Second', [2]], ['Third', [3]], ['', [1]]],
+  );
+});
+
+test('badgeSectionsOf drops empty sections but keeps a home for nobody', () => {
+  assert.deepEqual(
+    badgeSectionsOf([sectionBadge(1, 'b1')], [{ name: 'Empty', badgeIds: [9] }]).map((g) => g.name),
+    [''],
+  );
+  assert.deepEqual(badgeSectionsOf([], [{ name: 'Empty', badgeIds: [9] }]), [
+    { name: '', badges: [] },
+  ]);
+  // No sections configured at all: one unnamed group holding everything, in order.
+  assert.deepEqual(
+    badgeSectionsOf([sectionBadge(1, 'b1')], []).map((g) => g.badges.length),
+    [1],
+  );
 });
