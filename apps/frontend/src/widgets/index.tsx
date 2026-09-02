@@ -1255,8 +1255,7 @@ function PersonRing({
           // someone enrolled in only the third course must still get the third colour.
           const color = segment.overdue > 0 ? OVERDUE_COLOR : colorOf(segment.key);
           const fraction = (segment.percent ?? 0) / 100;
-          const targetAngle =
-            segment.targetPercent === null ? null : from + span * (segment.targetPercent / 100);
+          const target = (segment.targetPercent ?? 0) / 100;
 
           return (
             <g key={segment.key}>
@@ -1282,23 +1281,24 @@ function PersonRing({
                   </title>
                 </path>
               ) : null}
-              {/* Where the deadlines say this person should be by today: ahead of the
-                  fill when work is owed, behind it when work was finished early.
-
-                  Half the segment's width and centred in it, rather than spanning the
-                  whole arc: a full-width rule reads as a cut through the ring, which is
-                  a louder statement than "here is the plan". Pink at full opacity: it is
-                  already short enough not to shout, and the 75% it used to carry made it
-                  hard to pick out against a filled segment at all. */}
-              {options.showTarget && targetAngle !== null ? (
-                <line
-                  x1={center + (radius - stroke / 4) * Math.sin(targetAngle)}
-                  y1={center - (radius - stroke / 4) * Math.cos(targetAngle)}
-                  x2={center + (radius + stroke / 4) * Math.sin(targetAngle)}
-                  y2={center - (radius + stroke / 4) * Math.cos(targetAngle)}
+              {/* The plan, as a bar rather than a mark: it runs from the start of the
+                  segment to where the deadlines say this person should be by today, on
+                  the outer half of the segment's width. A tick said where the plan ends
+                  and nothing about how far it runs, which is the half of the comparison
+                  the eye actually does — plan against progress, two lengths from the
+                  same start, ending wherever they end. */}
+              {options.showTarget && target > 0 ? (
+                <path
+                  d={arcPath(
+                    center,
+                    center,
+                    radius + stroke / 4,
+                    from,
+                    from + span * Math.min(1, target),
+                  )}
+                  fill="none"
                   stroke={TARGET_COLOR}
-                  strokeWidth={2.5}
-                  strokeLinecap="round"
+                  strokeWidth={stroke / 2}
                 />
               ) : null}
             </g>

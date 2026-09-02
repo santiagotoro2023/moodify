@@ -679,8 +679,10 @@ export interface RingSegment extends RingLegendItem {
   /** null = nothing here tracks completion; the segment is drawn as an empty track. */
   percent: number | null;
   /**
-   * Where the fill would reach with nothing overdue — completed work plus the work whose
-   * date has passed. Null only when the segment tracks no activities at all.
+   * How far the schedule bar reaches: where the fill would be with nothing overdue —
+   * completed work plus the work whose date has passed — read across the segments as one
+   * plan, so a segment before the last one with a passed deadline reads 100. Null where
+   * there is no bar: nothing due yet in this segment or any after it, or no activities.
    */
   targetPercent: number | null;
   overdue: number;

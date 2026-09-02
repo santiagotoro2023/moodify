@@ -256,10 +256,62 @@ export function WidgetConfigForm({
   const ringCourseIds = Array.isArray(config.courseIds) ? (config.courseIds as number[]) : [];
   const ringCohortIds = Array.isArray(config.cohortIds) ? (config.cohortIds as number[]) : [];
 
+  const moveCourse = (index: number, by: number) => {
+    const next = [...ringCourseIds];
+    const moved = next[index];
+    const displaced = next[index + by];
+    if (moved === undefined || displaced === undefined) return;
+    next[index] = displaced;
+    next[index + by] = moved;
+    set('courseIds', next);
+  };
+
+  /**
+   * The order the courses are meant to be worked through: it is the segment order round
+   * the ring, the colour each course gets, and the order the schedule bar runs in.
+   */
+  const ringCourseOrder = () => (
+    <div>
+      <Label>Course order</Label>
+      <p className="mb-2 text-xs text-muted">
+        Segments run clockwise in this order, keep their colour by it, and the schedule bar
+        reads it as one plan: a date that has passed in a later course means the ones above
+        it were meant to be finished, and their bars fill.
+      </p>
+      <div className="space-y-1 rounded-xl border border-edge p-2">
+        {ringCourseIds.map((courseId, index) => (
+          <div key={courseId} className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm">
+            <span className="w-6 shrink-0 tabular-nums text-xs text-muted">{index + 1}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {courses.find((course) => course.id === courseId)?.fullname ?? `Course ${courseId}`}
+            </span>
+            <button
+              type="button"
+              aria-label={`Move course ${index + 1} up`}
+              disabled={index === 0}
+              onClick={() => moveCourse(index, -1)}
+              className="shrink-0 rounded-md p-1 text-muted hover:bg-surface hover:text-ink disabled:opacity-30"
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label={`Move course ${index + 1} down`}
+              disabled={index === ringCourseIds.length - 1}
+              onClick={() => moveCourse(index, 1)}
+              className="shrink-0 rounded-md p-1 text-muted hover:bg-surface hover:text-ink disabled:opacity-30"
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   /**
    * Ordered multi-select: ticking appends, so the list order is the segment order
-   * around the ring and therefore the colour each course gets. Untick and re-tick to
-   * move a course to the end.
+   * around the ring and therefore the colour each course gets. Reorder it below.
    */
   const ringCoursePicker = () => (
     <div>
@@ -1113,6 +1165,7 @@ export function WidgetConfigForm({
       {widget.type === 'completion_rings' ? (
         <>
           {ringCoursePicker()}
+          {ringCourseIds.length > 1 ? ringCourseOrder() : null}
           {ringSplitPicker()}
           {ringSegmentPicker()}
           {ringCohortPicker()}
@@ -1149,14 +1202,14 @@ export function WidgetConfigForm({
           </div>
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor={id('showTarget')} className="mb-0">
-              Show the schedule mark
+              Show the schedule bar
               <span className="mt-0.5 block text-xs font-normal text-muted">
-                A short pink tick, centred in the segment's width, for how far the person
-                would be if they had done exactly the work whose date has come round —
-                ahead of the fill when something is overdue, behind it when something was
-                finished early, and on the end of it when they are exactly on schedule.
-                Somebody who has not started yet gets it at the very beginning of the
-                segment. Only a segment with no completion-tracked activities gets none.
+                A pink bar along the outer half of each segment, running from the start of
+                the segment to how far the person would be if they had done exactly the work
+                whose date has come round. Longer than the fill means work is owed, shorter
+                means work was finished early. It reads the course order as one plan, so a
+                course with a date behind it fills the bars of every course above it.
+                Courses with nothing due yet get no bar.
               </span>
             </Label>
             <Switch

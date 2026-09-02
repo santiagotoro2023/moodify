@@ -402,12 +402,21 @@ non-breaking space at the row's own font size rather than a hand-set height — 
 real row, where a hand-picked one was merely close, and the drift showed as badges sitting a pixel
 or two off their neighbours'.
 
-The tick inside a segment marks where the fill would reach with nothing overdue: work already done
-plus work whose date has passed. The gap between fill and tick is exactly the missing work, and the
-tick is therefore always ahead of the fill or absent. The first version divided *due deadlines* by
-the course's activity count, which put one missed task among forty activities at 2.5% — at the very
-start of the segment, behind the fill, for the person who had missed it. Completion and deadline
-compliance are different axes; projecting one onto the other produced a number that meant nothing.
+The pink bar along the outer half of a segment is the plan: it runs from the start of the segment to
+where the fill would reach with nothing overdue — work already done plus work whose date has passed.
+Two lengths from the same start, so the comparison the eye does is plan against progress; a tick at
+the end of the plan said where it stopped and nothing about how far it ran. The first version divided
+*due deadlines* by the course's activity count, which put one missed task among forty activities at
+2.5% — at the very start of the segment, behind the fill, for the person who had missed it.
+Completion and deadline compliance are different axes; projecting one onto the other produced a
+number that meant nothing.
+
+The bar reads the **course order** as one plan rather than one plan per course. The frontier is the
+last segment holding a deadline whose date has passed: segments before it fill completely, the
+frontier gets its own target, and segments after it draw nothing, because nothing in them is due yet.
+A date behind you in course three says courses one and two were meant to be finished, whatever
+deadlines they carry — or whether they carry any. Course order is set in the widget's settings and is
+also the segment order round the ring and the colour each course gets, so one list drives all three.
 
 Under the name, one chip: red with a cross counting the overdue activities, green with a tick
 counting what was finished ahead of its date, or a plain "on track". Overdue used to be spelled out

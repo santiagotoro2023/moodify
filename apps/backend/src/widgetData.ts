@@ -387,6 +387,30 @@ async function loadDeadlineFacts(
  * tracking no completable activities. A mark for a course nobody has given a deadline is
  * not a schedule, it is a line at whatever the fill happens to be.
  */
+/**
+ * The schedule bar's reach per segment, read as one plan running through the segments in
+ * the widget's configured order rather than as one plan per course.
+ *
+ * The frontier is the last segment holding a deadline whose date has passed. Everything
+ * before it is work that should already be finished, so it fills; the frontier gets its
+ * own target; anything after it has nothing due yet and draws no bar at all. That is the
+ * whole point of ordering the courses: a deadline in course three says courses one and
+ * two were meant to be behind you, whatever their own deadlines say — or whether they
+ * carry any.
+ *
+ * `due` counts deadlines that have come round, not ones that were missed. A course
+ * finished on time is still a course whose dates have passed.
+ */
+export function cumulativeTargets(
+  targets: readonly (number | null)[],
+  due: readonly number[],
+): (number | null)[] {
+  const frontier = due.reduce((last, count, index) => (count > 0 ? index : last), -1);
+  return targets.map((target, index) =>
+    index < frontier ? 100 : index === frontier ? target : null,
+  );
+}
+
 export function targetPercent(
   facts: DeadlineFacts,
   activitiesCompleted: number,
@@ -1405,6 +1429,15 @@ async function completionRings(
           overdueActivities: facts.overdueNames,
         };
       });
+
+    // One plan across the ordered segments, not one per course — see cumulativeTargets.
+    const reach = cumulativeTargets(
+      segments.map((segment) => segment.targetPercent),
+      segments.map((segment) => deadlines.get(`${segment.key}:${userId}`)?.due ?? 0),
+    );
+    segments.forEach((segment, index) => {
+      segment.targetPercent = reach[index] ?? null;
+    });
 
     const tracked = segments
       .map((segment) => segment.percent)

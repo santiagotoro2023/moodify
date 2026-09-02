@@ -15,7 +15,14 @@ import type {
 import { deadlineDueAt, deadlineNextDueAt, nthWeekdayOf } from '@moodify/shared';
 import { anonymizeUsers, anonymizeWidgetData } from './anonymize.ts';
 import { badgeSectionsOf, sectionMatches } from '@moodify/shared';
-import { foldDeadlines, foldEvents, orderBadges, ringComparator, targetPercent } from './widgetData.ts';
+import {
+  cumulativeTargets,
+  foldDeadlines,
+  foldEvents,
+  orderBadges,
+  ringComparator,
+  targetPercent,
+} from './widgetData.ts';
 
 /**
  * Pure unit tests for the public-route anonymisation rules. The SQL side of
@@ -630,4 +637,14 @@ test('badgeSectionsOf keeps empty sections for the caller to align on', () => {
     badgeSectionsOf([sectionBadge(1, 'b1')], []).map((g) => g.badges.length),
     [1],
   );
+});
+
+test('cumulativeTargets runs one plan through the ordered segments', () => {
+  // Course 3 has a date behind it, so 1 and 2 were meant to be finished; 4 has nothing
+  // due yet and gets no bar, even though its own target was computable.
+  assert.deepEqual(cumulativeTargets([10, 20, 30, 40], [0, 2, 1, 0]), [100, 100, 30, null]);
+  // Nothing due anywhere: no plan to draw yet.
+  assert.deepEqual(cumulativeTargets([10, null], [0, 0]), [null, null]);
+  // The frontier keeps its own null — a segment tracking no activities has no bar.
+  assert.deepEqual(cumulativeTargets([null, null], [1, 0]), [null, null]);
 });
