@@ -595,8 +595,11 @@ The rings widget lays badges out in two fixed columns, in an order set in its se
 in that order follows alphabetically, so a newly awarded badge shows up rather than disappearing.
 Optional **sections** group them under headings drawn in the order the settings list them, with
 anything unassigned trailing underneath; membership is exclusive, and a section none of that
-person's badges belong to is dropped rather than left as a lonely heading. Order inside a section is
-still the badge order, so one sequence drives the whole layout.
+person's badges belong to is dropped — but only when nobody in the widget holds one, because
+dropping it per person is what knocks the wall out of alignment. Every section that survives is drawn
+on every tile, padded out with invisible chips to the most badges anybody holds in it, so a section
+begins at the same height whichever person you are looking at. Order inside a section is still the
+badge order, so one sequence drives the whole layout.
 Two columns is the point — a person with fifteen badges has to stay a readable block, not a column
 fifteen rows tall — so the column width is not negotiable and the *text* is what gives: each name is
 set at whatever size makes its longest word fit on one line, down to an 8px floor. That is stated in

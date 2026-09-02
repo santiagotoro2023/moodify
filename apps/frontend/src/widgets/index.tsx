@@ -228,6 +228,7 @@ function BadgeList({
   tight,
   onSelect,
   names,
+  padTo,
 }: {
   badges: BadgeType[];
   badgeSize: BadgeSize;
@@ -240,8 +241,11 @@ function BadgeList({
   onSelect?: (badge: BadgeType) => void;
   /** Names the text scales against. Set it to a superset when several lists must match. */
   names?: readonly string[];
+  /** Reserve this many chip slots, filling the spare ones with blanks. */
+  padTo?: number;
 }) {
-  if (badges.length === 0) {
+  const blanks = Math.max(0, (padTo ?? 0) - badges.length);
+  if (badges.length === 0 && blanks === 0) {
     return <p className="text-xs text-muted">No badges yet</p>;
   }
   const { icon, text, pad, track } = BADGE_SIZE[badgeSize];
@@ -287,6 +291,21 @@ function BadgeList({
               {badge.name}
             </span>
           </Chip>
+        </li>
+      ))}
+      {/* Reserved slots. Same markup as a chip, invisible: an empty box of a guessed
+          height would drift out of step with the real ones the moment a size changed. */}
+      {Array.from({ length: blanks }, (_, index) => (
+        <li key={`blank-${index}`} className={cn(grid && 'min-w-0', 'invisible')} aria-hidden="true">
+          <span className={cn('flex w-full items-center gap-2 rounded-full', pad)}>
+            <span className={cn('shrink-0 rounded-full', icon)} />
+            <span
+              className={cn('leading-snug', tight ? BADGE_TEXT_TIGHT[badgeSize] : text)}
+              style={grid ? { fontSize } : undefined}
+            >
+              &nbsp;
+            </span>
+          </span>
         </li>
       ))}
     </ul>
@@ -1175,12 +1194,15 @@ function PersonRing({
   options,
   instance,
   rows,
+  badgeSlots,
   onBadge,
 }: {
   entry: CompletionRingsEntry;
   colorOf: (segmentKey: string) => string;
   /** Segment count of the busiest person, so every tile reserves the same room. */
   rows: number;
+  /** Chip slots to reserve per badge section — the busiest tile's count, per section. */
+  badgeSlots: number[];
   options: RingOptions;
   instance: string;
   onBadge: (badge: BadgeType) => void;
@@ -1373,27 +1395,37 @@ function PersonRing({
       {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} rows={rows} /> : null}
       {options.showBadges ? (
         <div className="mt-3 w-full space-y-2">
-          {badgeSectionsOf(entry.badges, options.badgeSections).map((section, index) => (
-            <div key={`${index}-${section.name}`}>
-              {section.name === '' ? null : (
-                <p className="mb-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted">
-                  {section.name}
-                </p>
-              )}
-              <BadgeList
-                badges={section.badges}
-                badgeSize={options.badgeSize}
-                uniform
-                columns={2}
-                tight
-                /* Every section on the tile sizes its text against the same set, so a
-                   section of short names does not end up in bigger type than the one
-                   above it. */
-                names={entry.badges.map((badge) => badge.name)}
-                onSelect={onBadge}
-              />
-            </div>
-          ))}
+          {/* Sections nobody in the whole widget holds a badge in are dropped; the rest
+              are drawn on every tile, padded to the busiest tile's count, so a section
+              starts at the same height whichever person you are looking at. */}
+          {badgeSectionsOf(entry.badges, options.badgeSections)
+            .map((section, index) => ({ section, slots: badgeSlots[index] ?? 0 }))
+            .filter(({ slots }) => slots > 0)
+            .map(({ section, slots }, index) => (
+              <div key={`${index}-${section.name}`}>
+                {section.name === '' ? null : (
+                  <p className="mb-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted">
+                    {section.name}
+                  </p>
+                )}
+                <BadgeList
+                  badges={section.badges}
+                  badgeSize={options.badgeSize}
+                  uniform
+                  columns={2}
+                  tight
+                  padTo={slots}
+                  /* Every section on the tile sizes its text against the same set, so a
+                     section of short names does not end up in bigger type than the one
+                     above it. */
+                  names={entry.badges.map((badge) => badge.name)}
+                  onSelect={onBadge}
+                />
+              </div>
+            ))}
+          {badgeSlots.every((slot) => slot === 0) ? (
+            <BadgeList badges={[]} badgeSize={options.badgeSize} uniform columns={2} tight />
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -1418,6 +1450,14 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
 
   const tile = RING_PX[config.ringSize] + 40;
   const rows = Math.max(...data.entries.map((entry) => entry.segments.length));
+  // Per section, the most badges anybody holds in it. Sections are the same list for
+  // every entry, so index i means the same section on every tile.
+  const badgeSlots = data.entries
+    .map((entry) => badgeSectionsOf(entry.badges, config.badgeSections))
+    .reduce<number[]>(
+      (most, groups) => groups.map((group, index) => Math.max(most[index] ?? 0, group.badges.length)),
+      [],
+    );
 
   return (
     <>
@@ -1448,6 +1488,7 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
             options={config}
             instance={instance}
             rows={rows}
+            badgeSlots={badgeSlots}
             onBadge={setOpenBadge}
           />
         ))}

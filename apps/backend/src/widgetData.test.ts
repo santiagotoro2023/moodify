@@ -615,14 +615,16 @@ test('badgeSectionsOf groups in section order and trails the unassigned', () => 
   );
 });
 
-test('badgeSectionsOf drops empty sections but keeps a home for nobody', () => {
+test('badgeSectionsOf keeps empty sections for the caller to align on', () => {
+  // Held by nobody here, but still returned: the widget pads this slot out so the
+  // section below it starts at the same height on every tile.
   assert.deepEqual(
-    badgeSectionsOf([sectionBadge(1, 'b1')], [{ name: 'Empty', badgeIds: [9] }]).map((g) => g.name),
-    [''],
+    badgeSectionsOf([sectionBadge(1, 'b1')], [{ name: 'Empty', badgeIds: [9] }]).map((g) => [
+      g.name,
+      g.badges.length,
+    ]),
+    [['Empty', 0], ['', 1]],
   );
-  assert.deepEqual(badgeSectionsOf([], [{ name: 'Empty', badgeIds: [9] }]), [
-    { name: '', badges: [] },
-  ]);
   // No sections configured at all: one unnamed group holding everything, in order.
   assert.deepEqual(
     badgeSectionsOf([sectionBadge(1, 'b1')], []).map((g) => g.badges.length),

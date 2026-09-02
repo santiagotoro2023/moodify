@@ -534,10 +534,11 @@ export interface BadgeSection {
  * order, with whatever no section claims trailing under a blank heading.
  *
  * Membership is exclusive — the first section to name a badge keeps it — so a badge
- * listed twice cannot be drawn twice. Empty sections are dropped rather than left as a
- * lonely heading: a section only describes badges, and with none of them held by this
- * person it has nothing to say. Somebody with no badges at all still gets one unnamed
- * group, which is what renders the "no badges yet" line.
+ * listed twice cannot be drawn twice. Every configured section comes back, empty ones
+ * included: whether to draw a section this person holds nothing in is the caller's
+ * decision, not this function's, because dropping it per person is exactly what knocks
+ * a wall of tiles out of alignment. The rings widget keeps a section that anybody in
+ * the widget has a badge in and pads the rest of the tiles out to match.
  */
 export function badgeSectionsOf(
   badges: Badge[],
@@ -554,8 +555,7 @@ export function badgeSectionsOf(
     }),
   }));
   groups.push({ name: '', badges: badges.filter((badge) => !claimed.has(badge.id)) });
-  const filled = groups.filter((group) => group.badges.length > 0);
-  return filled.length === 0 ? [{ name: '', badges: [] }] : filled;
+  return groups;
 }
 
 export const DEFAULT_TITLE_GAP = 16;
