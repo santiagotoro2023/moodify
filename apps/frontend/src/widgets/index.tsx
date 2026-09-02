@@ -1108,7 +1108,12 @@ function earlyLabel(earlyDone: number): string {
 }
 
 /**
- * Per-course rows: colour, course, percentage, overdue count.
+ * Per-course rows: colour, course, percentage.
+ *
+ * No overdue count. It used to sit in a fourth column as a red "!3", and between the red
+ * segment in the ring and the red chip under the name the tile already says so twice —
+ * the exclamation mark only added something to flinch at. The count survives as the
+ * row's tooltip.
  *
  * Laid out as one grid with fixed side columns, not as flex rows, so the numbers sit at
  * the same x on every tile — a table read across a wall of them, without the ruled lines
@@ -1128,7 +1133,7 @@ function SegmentRows({
   return (
     <dl
       className="grid w-full items-center gap-x-1.5 gap-y-0.5 text-[11px]"
-      style={{ gridTemplateColumns: 'auto minmax(0, 1fr) 2.4rem 1.3rem' }}
+      style={{ gridTemplateColumns: 'auto minmax(0, 1fr) 2.4rem' }}
     >
       {entry.segments.map((segment) => (
         <Fragment key={segment.key}>
@@ -1136,14 +1141,11 @@ function SegmentRows({
           <dt className="truncate text-muted" title={segment.title}>
             {segment.label}
           </dt>
-          <dd className="text-right tabular-nums">
-            {Math.round(segment.percent ?? 0)}%
-          </dd>
           <dd
-            className="text-right tabular-nums text-bad"
+            className="text-right tabular-nums"
             title={segment.overdue > 0 ? overdueLabel(segment.overdue) : undefined}
           >
-            {segment.overdue > 0 ? `!${segment.overdue}` : ''}
+            {Math.round(segment.percent ?? 0)}%
           </dd>
         </Fragment>
       ))}
@@ -1153,7 +1155,7 @@ function SegmentRows({
           height was close but never equal, and the drift showed up as tiles whose
           badges sat a pixel or two off from their neighbours'. */}
       {Array.from({ length: padding }, (_, index) => (
-        <span key={`pad-${index}`} className="col-span-4" aria-hidden="true">
+        <span key={`pad-${index}`} className="col-span-3" aria-hidden="true">
           &nbsp;
         </span>
       ))}

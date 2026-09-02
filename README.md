@@ -391,7 +391,9 @@ neighbours change.
 "Ring size" therefore sets how densely the wall packs before it wraps, not a literal diameter.
 Everything inside — stroke, text, avatar — is expressed in viewBox units, so a tile scales as one
 piece. The per-course rows under each ring are a grid with fixed side columns padded out to the
-busiest person's course count, so the numbers line up across every tile and the badges start at the
+busiest person's course count — colour, course, percentage, and no overdue column: between the red
+segment in the ring and the red chip under the name the tile already says it twice, and a red "!3"
+in the rows was one flinch too many. The count is the row's tooltip. The numbers line up across every tile and the badges start at the
 same height: a table read across a wall, without the ruled lines. The padding rows are a
 non-breaking space at the row's own font size rather than a hand-set height — exactly as tall as a
 real row, where a hand-picked one was merely close, and the drift showed as badges sitting a pixel
