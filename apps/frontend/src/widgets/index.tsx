@@ -1271,23 +1271,24 @@ function PersonRing({
                 stroke="rgba(255,255,255,0.09)"
                 strokeWidth={stroke}
               />
-              {/* The fill owns the inner half of the stroke and the schedule bar the
-                  outer half, always — a fill at full width would read as "ahead" purely
-                  by being fatter than the plan beside it, which is a difference in
-                  meaning drawn as a difference in thickness. Two half-width tracks from
-                  the same start compare by length and nothing else. */}
+              {/* The stroke is split three-to-one: completion on the inner three
+                  quarters, the schedule bar on the outer quarter. Both always at their
+                  own width, whoever is ahead — a fill that widened when it passed the
+                  plan would draw a difference in meaning as a difference in thickness.
+                  The bar is the reference, so it is the thinner of the two; the reading
+                  everyone comes for is the fill. */}
               {fraction > 0 ? (
                 <path
                   d={arcPath(
                     center,
                     center,
-                    radius - stroke / 4,
+                    radius - stroke / 8,
                     from,
                     from + span * Math.min(1, fraction),
                   )}
                   fill="none"
                   stroke={color}
-                  strokeWidth={stroke / 2}
+                  strokeWidth={(stroke * 3) / 4}
                 >
                   <title>
                     {`${segment.title}: ${Math.round(segment.percent ?? 0)}%`}
@@ -1307,13 +1308,13 @@ function PersonRing({
                   d={arcPath(
                     center,
                     center,
-                    radius + stroke / 4,
+                    radius + (stroke * 3) / 8,
                     from,
                     from + span * Math.min(1, target),
                   )}
                   fill="none"
                   stroke={options.targetColor}
-                  strokeWidth={stroke / 2}
+                  strokeWidth={stroke / 4}
                 />
               ) : null}
             </g>

@@ -256,6 +256,11 @@ export function WidgetConfigForm({
   const ringCourseIds = Array.isArray(config.courseIds) ? (config.courseIds as number[]) : [];
   const ringCohortIds = Array.isArray(config.cohortIds) ? (config.cohortIds as number[]) : [];
 
+  const ringCohortByCourse: Record<string, number> =
+    typeof config.cohortByCourse === 'object' && config.cohortByCourse !== null
+      ? (config.cohortByCourse as Record<string, number>)
+      : {};
+
   const moveCourse = (index: number, by: number) => {
     const next = [...ringCourseIds];
     const moved = next[index];
@@ -276,7 +281,10 @@ export function WidgetConfigForm({
       <p className="mb-2 text-xs text-muted">
         Segments run clockwise in this order, keep their colour by it, and the schedule bar
         reads it as one plan: a date that has passed in a later course means the ones above
-        it were meant to be finished, and their bars fill.
+        it were meant to be finished, and their bars fill. Name the cohort currently working
+        on each course and that works for people whose own deadlines cannot say it — a
+        third-year has no deadline in the first-year course, since those name the first-year
+        cohort, but being in the third-year cohort puts the first two years behind them.
       </p>
       <div className="space-y-1 rounded-xl border border-edge p-2">
         {ringCourseIds.map((courseId, index) => (
@@ -285,6 +293,26 @@ export function WidgetConfigForm({
             <span className="min-w-0 flex-1 truncate">
               {courses.find((course) => course.id === courseId)?.fullname ?? `Course ${courseId}`}
             </span>
+            {cohorts.length === 0 ? null : (
+              <Select
+                aria-label={`Cohort working on course ${index + 1}`}
+                className="w-36 shrink-0"
+                value={String(ringCohortByCourse[String(courseId)] ?? '')}
+                onChange={(e) => {
+                  const next = { ...ringCohortByCourse };
+                  if (e.target.value === '') delete next[String(courseId)];
+                  else next[String(courseId)] = Number(e.target.value);
+                  set('cohortByCourse', next);
+                }}
+              >
+                <option value="">No cohort</option>
+                {cohorts.map((cohort) => (
+                  <option key={cohort.id} value={cohort.id}>
+                    {cohort.name}
+                  </option>
+                ))}
+              </Select>
+            )}
             <button
               type="button"
               aria-label={`Move course ${index + 1} up`}

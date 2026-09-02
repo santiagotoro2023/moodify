@@ -256,6 +256,15 @@ export const completionRingsConfig = z.object({
    */
   splits: z.record(z.string(), z.array(ringSectionSplit).max(12)).default({}),
   /**
+   * Course id (as a string key) -> the cohort whose members are currently working on it.
+   * That is what tells the schedule bar where somebody stands in the course order when
+   * their own deadlines cannot: a third-year has no deadline in the first-year course,
+   * because those name the first-year cohort, but being in the third-year cohort says
+   * the first two years were meant to be behind them. Courses left unmapped fall back to
+   * their deadlines alone.
+   */
+  cohortByCourse: z.record(z.string(), z.number().int().positive()).default({}),
+  /**
    * 'auto' spaces the hues evenly over however many segments are on screen; 'manual'
    * takes each segment's colour from `colors`, falling back to the auto hue for any
    * segment left unset, so nothing is ever drawn colourless.

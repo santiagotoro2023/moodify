@@ -406,10 +406,11 @@ One legend line sits above the wall, naming the schedule bar in its own colour. 
 none: every tile already names them, so a copy at the top said nothing the reader did not already
 have in front of them — but the bar is the same colour on every tile and names itself nowhere.
 
-A segment is two half-width tracks inside one full-width empty one: completion on the inner half,
-the schedule bar on the outer half. The fill used to take the whole stroke, which made being ahead
-look like being fatter — a difference in meaning drawn as a difference in thickness. Two half-width
-tracks from the same start compare by length and nothing else. The bar's colour is a setting (an
+A segment splits its stroke three-to-one inside one full-width empty track: completion on the inner
+three quarters, the schedule bar on the outer quarter. The fill used to take the whole stroke, which
+made being ahead look like being fatter — a difference in meaning drawn as a difference in
+thickness. Fixed widths from the same start compare by length and nothing else, and the bar is the
+thinner of the two because it is the reference, not the reading everyone comes for. The bar's colour is a setting (an
 `<input type="color">`, since the curated segment palette exists to stay clear of the overdue red
 and the bar is never a course colour); it defaults to pink.
 
@@ -426,7 +427,15 @@ The bar reads the **course order** as one plan rather than one plan per course. 
 last segment holding a deadline whose date has passed: segments before it fill completely, the
 frontier gets its own target, and segments after it draw nothing, because nothing in them is due yet.
 A date behind you in course three says courses one and two were meant to be finished, whatever
-deadlines they carry — or whether they carry any. Course order is set in the widget's settings and is
+deadlines they carry — or whether they carry any.
+
+The frontier also moves on **cohort**. Deadlines usually name one, so a third-year has no deadline
+at all in the first-year course and their own dates cannot say where they stand: with nothing due
+anywhere they used to get no bar, in the two years they should have behind them. Naming the cohort
+currently working on each course, in the same settings list as the order, fixes that — a person's
+current segment is the last one whose cohort they are in, and everything above it fills. Courses
+left unmapped fall back to their deadlines alone, and the two rules are a plain max, so whichever
+puts the person further along wins. Course order is set in the widget's settings and is
 also the segment order round the ring and the colour each course gets, so one list drives all three.
 
 Under the name, one chip: red with a cross counting the overdue activities, green with a tick

@@ -400,12 +400,22 @@ async function loadDeadlineFacts(
  *
  * `due` counts deadlines that have come round, not ones that were missed. A course
  * finished on time is still a course whose dates have passed.
+ *
+ * `current` is the other way the frontier moves: the segment whose cohort this person is
+ * in. Deadlines usually name a cohort, so somebody in their third year has none at all in
+ * the first-year course and would otherwise get no bar anywhere — being in the third-year
+ * cohort is what says the first two were meant to be finished.
  */
 export function cumulativeTargets(
   targets: readonly (number | null)[],
   due: readonly number[],
+  /** Last segment whose cohort this person is in, or -1 where none is mapped. */
+  current = -1,
 ): (number | null)[] {
-  const frontier = due.reduce((last, count, index) => (count > 0 ? index : last), -1);
+  const frontier = Math.max(
+    due.reduce((last, count, index) => (count > 0 ? index : last), -1),
+    current,
+  );
   return targets.map((target, index) =>
     index < frontier ? 100 : index === frontier ? target : null,
   );
@@ -1379,6 +1389,28 @@ async function completionRings(
       .map((split) => `${courseId}:${split.section}`);
   });
 
+  // Which of the mapped cohorts each person is in. Only the mapped ones are fetched:
+  // this answers "where is this person in the course order", not "what cohorts exist".
+  const cohortByCourse = new Map(
+    Object.entries(config.cohortByCourse)
+      .map(([id, cohort]) => [Number(id), cohort] as const)
+      .filter(([id]) => Number.isFinite(id)),
+  );
+  const cohortsOf = new Map<number, Set<number>>();
+  if (cohortByCourse.size > 0) {
+    const { rows: memberRows } = await sql<{ moodle_user_id: number; moodle_cohort_id: number }>(
+      `select moodle_user_id, moodle_cohort_id
+         from cohort_members
+        where moodle_user_id = any($1::int[]) and moodle_cohort_id = any($2::int[])`,
+      [userIds, [...new Set(cohortByCourse.values())]],
+    );
+    for (const member of memberRows) {
+      const set = cohortsOf.get(member.moodle_user_id) ?? new Set<number>();
+      set.add(member.moodle_cohort_id);
+      cohortsOf.set(member.moodle_user_id, set);
+    }
+  }
+
   const badgesByUser = new Map<number, Badge[]>();
   if (config.showBadges) {
     const { rows: badgeRows } = await sql<UserBadgeRow>(
@@ -1403,8 +1435,8 @@ async function completionRings(
 
   const entries: CompletionRingsEntry[] = userRows.map((row) => {
     const userId = row.moodle_user_id;
-    const segments: RingSegment[] = plan
-      .filter((entry) => isEnrolled.has(`${entry.courseId}:${userId}`))
+    const mine = plan.filter((entry) => isEnrolled.has(`${entry.courseId}:${userId}`));
+    const segments: RingSegment[] = mine
       .map(({ courseId, section, item }) => {
         // A section counts its own activities; a whole course reuses the snapshot the
         // poller already keeps, which is both fresher and the number every other widget
@@ -1431,9 +1463,14 @@ async function completionRings(
       });
 
     // One plan across the ordered segments, not one per course — see cumulativeTargets.
+    const held = cohortsOf.get(userId);
     const reach = cumulativeTargets(
       segments.map((segment) => segment.targetPercent),
       segments.map((segment) => deadlines.get(`${segment.key}:${userId}`)?.due ?? 0),
+      mine.reduce((last, entry, index) => {
+        const cohort = cohortByCourse.get(entry.courseId);
+        return cohort !== undefined && held?.has(cohort) === true ? index : last;
+      }, -1),
     );
     segments.forEach((segment, index) => {
       segment.targetPercent = reach[index] ?? null;

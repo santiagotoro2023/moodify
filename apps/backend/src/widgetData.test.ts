@@ -647,4 +647,9 @@ test('cumulativeTargets runs one plan through the ordered segments', () => {
   assert.deepEqual(cumulativeTargets([10, null], [0, 0]), [null, null]);
   // The frontier keeps its own null — a segment tracking no activities has no bar.
   assert.deepEqual(cumulativeTargets([null, null], [1, 0]), [null, null]);
+  // A third-year with no deadline of their own anywhere: the cohort mapping says where
+  // they are, so the two years behind them fill and their own year waits for a date.
+  assert.deepEqual(cumulativeTargets([null, null, null], [0, 0, 0], 2), [100, 100, null]);
+  // A first-year in the same widget: nothing above them fills.
+  assert.deepEqual(cumulativeTargets([20, null, null], [3, 0, 0], 0), [20, null, null]);
 });
