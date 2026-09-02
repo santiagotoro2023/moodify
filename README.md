@@ -402,7 +402,14 @@ non-breaking space at the row's own font size rather than a hand-set height — 
 real row, where a hand-picked one was merely close, and the drift showed as badges sitting a pixel
 or two off their neighbours'.
 
-The pink bar along the outer half of a segment is the plan: it runs from the start of the segment to
+A segment is two half-width tracks inside one full-width empty one: completion on the inner half,
+the schedule bar on the outer half. The fill used to take the whole stroke, which made being ahead
+look like being fatter — a difference in meaning drawn as a difference in thickness. Two half-width
+tracks from the same start compare by length and nothing else. The bar's colour is a setting (an
+`<input type="color">`, since the curated segment palette exists to stay clear of the overdue red
+and the bar is never a course colour); it defaults to pink.
+
+The bar is the plan: it runs from the start of the segment to
 where the fill would reach with nothing overdue — work already done plus work whose date has passed.
 Two lengths from the same start, so the comparison the eye does is plan against progress; a tick at
 the end of the plan said where it stopped and nothing about how far it ran. The first version divided

@@ -14,7 +14,7 @@ import {
 } from '@moodify/shared';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { api, cn, errorMessage } from '@/lib/api';
-import { ringColorAt } from './index';
+import { DEFAULT_TARGET_COLOR, ringColorAt } from './index';
 import { Button, ErrorNote, Input, Label, Select, Spinner, Switch } from '@/ui';
 
 type Config = Record<string, unknown>;
@@ -1218,6 +1218,25 @@ export function WidgetConfigForm({
               onCheckedChange={(v) => set('showTarget', v)}
             />
           </div>
+          {config.showTarget !== false ? (
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor={id('targetColor')} className="mb-0">
+                Schedule bar colour
+              </Label>
+              {/* The OS picker rather than a swatch row: one input, every colour, and the
+                  segment palette's reason for being curated — staying clear of the
+                  overdue red — does not apply to a bar that is never a course colour. */}
+              <input
+                id={id('targetColor')}
+                type="color"
+                className="h-8 w-16 shrink-0 cursor-pointer rounded-lg border border-edge bg-transparent"
+                value={
+                  typeof config.targetColor === 'string' ? config.targetColor : DEFAULT_TARGET_COLOR
+                }
+                onChange={(e) => set('targetColor', e.target.value)}
+              />
+            </div>
+          ) : null}
           <div>
             <Label htmlFor={id('ringMarker')}>Identify each ring by</Label>
             <Select

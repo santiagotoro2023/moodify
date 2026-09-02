@@ -281,8 +281,10 @@ export const completionRingsConfig = z.object({
   sortDir,
   ringSize: z.enum(RING_SIZES).default('medium'),
   marker: z.enum(RING_MARKERS).default('name'),
-  /** Draw the "where you should be by now" tick inside each segment. */
+  /** Draw the "where you should be by now" bar along each segment's outer half. */
   showTarget: z.boolean().default(true),
+  /** Colour of that bar. */
+  targetColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#ffc2e0'),
   /** List every badge the person holds under their ring. */
   showBadges: z.boolean().default(false),
   /**

@@ -327,6 +327,7 @@ const OVERDUE_COLOR = '#f43f5e';
 
 /** The schedule mark. Pink rather than white: present without competing with the fill. */
 const TARGET_COLOR = '#ffc2e0';
+export { TARGET_COLOR as DEFAULT_TARGET_COLOR };
 
 /**
  * Segment colours, generated from the number of courses on screen rather than picked
@@ -1066,6 +1067,7 @@ interface RingOptions {
   colors: Record<string, string>;
   marker: RingMarker;
   showTarget: boolean;
+  targetColor: string;
   showBadges: boolean;
   badgeSize: BadgeSize;
   badgeSections: BadgeSection[];
@@ -1085,6 +1087,10 @@ function ringOptionsOf(config: unknown): RingOptions {
         : {},
     marker: (marker === 'avatar' || marker === 'both' ? marker : 'name') as RingMarker,
     showTarget: raw.showTarget !== false,
+    targetColor:
+      typeof raw.targetColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.targetColor)
+        ? raw.targetColor
+        : TARGET_COLOR,
     showBadges: raw.showBadges === true,
     badgeSize: (badge === 'medium' || badge === 'large' ? badge : 'small') as BadgeSize,
     badgeSections: Array.isArray(raw.badgeSections) ? (raw.badgeSections as BadgeSection[]) : [],
@@ -1265,12 +1271,23 @@ function PersonRing({
                 stroke="rgba(255,255,255,0.09)"
                 strokeWidth={stroke}
               />
+              {/* The fill owns the inner half of the stroke and the schedule bar the
+                  outer half, always — a fill at full width would read as "ahead" purely
+                  by being fatter than the plan beside it, which is a difference in
+                  meaning drawn as a difference in thickness. Two half-width tracks from
+                  the same start compare by length and nothing else. */}
               {fraction > 0 ? (
                 <path
-                  d={arcPath(center, center, radius, from, from + span * Math.min(1, fraction))}
+                  d={arcPath(
+                    center,
+                    center,
+                    radius - stroke / 4,
+                    from,
+                    from + span * Math.min(1, fraction),
+                  )}
                   fill="none"
                   stroke={color}
-                  strokeWidth={stroke}
+                  strokeWidth={stroke / 2}
                 >
                   <title>
                     {`${segment.title}: ${Math.round(segment.percent ?? 0)}%`}
@@ -1282,11 +1299,9 @@ function PersonRing({
                 </path>
               ) : null}
               {/* The plan, as a bar rather than a mark: it runs from the start of the
-                  segment to where the deadlines say this person should be by today, on
-                  the outer half of the segment's width. A tick said where the plan ends
-                  and nothing about how far it runs, which is the half of the comparison
-                  the eye actually does — plan against progress, two lengths from the
-                  same start, ending wherever they end. */}
+                  segment to where the deadlines say this person should be by today. A
+                  tick said where the plan ends and nothing about how far it runs, which
+                  is the half of the comparison the eye actually does. */}
               {options.showTarget && target > 0 ? (
                 <path
                   d={arcPath(
@@ -1297,7 +1312,7 @@ function PersonRing({
                     from + span * Math.min(1, target),
                   )}
                   fill="none"
-                  stroke={TARGET_COLOR}
+                  stroke={options.targetColor}
                   strokeWidth={stroke / 2}
                 />
               ) : null}
