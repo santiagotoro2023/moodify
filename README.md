@@ -402,7 +402,10 @@ non-breaking space at the row's own font size rather than a hand-set height — 
 real row, where a hand-picked one was merely close, and the drift showed as badges sitting a pixel
 or two off their neighbours'.
 
-One legend line sits above the wall, naming the schedule bar in its own colour. The courses have
+The schedule bar is named twice: as the first row of each tile's own legend — that list is where a
+colour on the tile gets a name, and the bar was the one colour on it that named itself nowhere — and
+as one line above the wall, which is the only place left to say it when the tiles are set to show
+percentages in the middle rather than a legend at all. The courses have
 none: every tile already names them, so a copy at the top said nothing the reader did not already
 have in front of them — but the bar is the same colour on every tile and names itself nowhere.
 

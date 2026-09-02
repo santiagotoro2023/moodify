@@ -1149,10 +1149,13 @@ function SegmentRows({
   entry,
   colorOf,
   rows,
+  target,
 }: {
   entry: CompletionRingsEntry;
   colorOf: (segmentKey: string) => string;
   rows: number;
+  /** Schedule-bar colour, for the legend's own first row. Unset draws no such row. */
+  target?: string;
 }) {
   const padding = Math.max(0, rows - entry.segments.length);
   return (
@@ -1160,6 +1163,17 @@ function SegmentRows({
       className="grid w-full items-center gap-x-1.5 gap-y-0.5 text-[11px]"
       style={{ gridTemplateColumns: 'auto minmax(0, 1fr) 2.4rem' }}
     >
+      {/* The plan, at the top of the legend rather than only above the wall: this list is
+          where a colour on this tile gets named, and the schedule bar was the one colour
+          on it that named itself nowhere. A bar rather than a dot, so the swatch is the
+          shape of the thing it stands for. */}
+      {target === undefined ? null : (
+        <>
+          <span className="h-1 w-2 rounded-full" style={{ background: target }} />
+          <dt className="truncate text-muted">Should be done</dt>
+          <dd />
+        </>
+      )}
       {entry.segments.map((segment) => (
         <Fragment key={segment.key}>
           <span className="h-2 w-2 rounded-full" style={{ background: colorOf(segment.key) }} />
@@ -1408,7 +1422,14 @@ function PersonRing({
         <p className="text-[11px] text-muted">On track</p>
       )}
       </div>
-      {withAvatar ? <SegmentRows entry={entry} colorOf={colorOf} rows={rows} /> : null}
+      {withAvatar ? (
+        <SegmentRows
+          entry={entry}
+          colorOf={colorOf}
+          rows={rows}
+          target={options.showTarget ? options.targetColor : undefined}
+        />
+      ) : null}
       {options.showBadges ? (
         <div className="mt-3 w-full space-y-2">
           {/* Sections nobody in the whole widget holds a badge in are dropped; the rest
