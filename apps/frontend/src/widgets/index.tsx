@@ -1430,8 +1430,15 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
           middle of the ring or as the rows under it, so a second copy at the top said
           nothing the reader did not have in front of them. */}
       <div
-        className="grid gap-3"
-        style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${tile}px, 1fr))` }}
+        className="grid min-h-full gap-3"
+        style={{
+          gridTemplateColumns: `repeat(auto-fit, minmax(${tile}px, 1fr))`,
+          // min-content floor, 1fr ceiling: a row is never shorter than its tallest tile,
+          // and any height the widget has spare is split between the rows instead of
+          // pooling as dead space under the last one. A plain 1fr would squash the tiles
+          // when the widget is smaller than its contents.
+          gridAutoRows: 'minmax(min-content, 1fr)',
+        }}
       >
         {data.entries.map((entry) => (
           <PersonRing

@@ -388,7 +388,10 @@ neighbours change.
 
 **Rings fill their column.** The SVG carries a viewBox and no fixed pixel size, and the grid uses
 `auto-fit`, so empty tracks collapse and widening the widget grows the rings instead of the gaps.
-"Ring size" therefore sets how densely the wall packs before it wraps, not a literal diameter.
+"Ring size" therefore sets how densely the wall packs before it wraps, not a literal diameter. The
+rows are `minmax(min-content, 1fr)` on a grid with `min-h-full`, so spare height in a tall widget is
+split between the rows rather than pooling as dead space under the last one — with the min-content
+floor keeping the tiles at full size when the widget is smaller than its contents instead.
 Everything inside — stroke, text, avatar — is expressed in viewBox units, so a tile scales as one
 piece. The per-course rows under each ring are a grid with fixed side columns padded out to the
 busiest person's course count — colour, course, percentage, and no overdue column: between the red
