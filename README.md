@@ -402,6 +402,10 @@ non-breaking space at the row's own font size rather than a hand-set height — 
 real row, where a hand-picked one was merely close, and the drift showed as badges sitting a pixel
 or two off their neighbours'.
 
+One legend line sits above the wall, naming the schedule bar in its own colour. The courses have
+none: every tile already names them, so a copy at the top said nothing the reader did not already
+have in front of them — but the bar is the same colour on every tile and names itself nowhere.
+
 A segment is two half-width tracks inside one full-width empty one: completion on the inner half,
 the schedule bar on the outer half. The fill used to take the whole stroke, which made being ahead
 look like being fatter — a difference in meaning drawn as a difference in thickness. Two half-width

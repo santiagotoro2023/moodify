@@ -1475,17 +1475,33 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
     );
 
   return (
-    <>
+    // A flex column so the legend takes its own height and the grid gets the rest: with
+    // the grid on min-h-full instead, the two together came to more than the widget and
+    // every tile scrolled by the height of one line.
+    <div className="flex h-full flex-col">
       {/* auto-fit, not auto-fill: empty tracks collapse, so three people on a full-width
           widget stretch across it and their rings grow with it, rather than huddling at
           the minimum width with dead space to the right. Ring size sets that minimum —
           how densely the wall packs — and no longer the literal pixel diameter.
 
-          There is no legend above the wall: every tile already carries one, either in the
-          middle of the ring or as the rows under it, so a second copy at the top said
-          nothing the reader did not have in front of them. */}
+          The courses have no legend above the wall: every tile already carries one, either
+          in the middle of the ring or as the rows under it, so a second copy at the top
+          said nothing the reader did not have in front of them. The schedule bar is the
+          exception — see the line above the grid. */}
+      {/* The one legend line left at the top. The courses lost theirs — every tile
+          already names them — but the schedule bar is the same pink on every tile and
+          names itself nowhere, so without this it is just a second bar in a colour. */}
+      {config.showTarget ? (
+        <p className="mb-2 flex shrink-0 items-center gap-2 text-[11px] text-muted">
+          <span
+            className="h-1.5 w-6 shrink-0 rounded-full"
+            style={{ background: config.targetColor }}
+          />
+          Should be done by now
+        </p>
+      ) : null}
       <div
-        className="grid min-h-full gap-3"
+        className="grid flex-1 gap-3"
         style={{
           gridTemplateColumns: `repeat(auto-fit, minmax(${tile}px, 1fr))`,
           // min-content floor, 1fr ceiling: a row is never shorter than its tallest tile,
@@ -1510,7 +1526,7 @@ function CompletionRings({ data, config }: { data: CompletionRingsData; config: 
       </div>
 
       <BadgeDialog badge={openBadge} onClose={() => setOpenBadge(null)} />
-    </>
+    </div>
   );
 }
 
