@@ -402,12 +402,12 @@ non-breaking space at the row's own font size rather than a hand-set height — 
 real row, where a hand-picked one was merely close, and the drift showed as badges sitting a pixel
 or two off their neighbours'.
 
-The schedule bar is named twice: as the first row of each tile's own legend — that list is where a
-colour on the tile gets a name, and the bar was the one colour on it that named itself nowhere — and
-as one line above the wall, which is the only place left to say it when the tiles are set to show
-percentages in the middle rather than a legend at all. The courses have
-none: every tile already names them, so a copy at the top said nothing the reader did not already
-have in front of them — but the bar is the same colour on every tile and names itself nowhere.
+The schedule bar is named in the first row of each tile's own legend: that list is where a colour on
+the tile gets a name, and the bar was the one colour on it that named itself nowhere. Nothing is
+named above the wall — every tile already carries its legend, so a copy at the top only repeated
+what the reader had in front of them. With the tiles set to show percentages in the middle rather
+than a legend, the bar goes unlabelled; the colour is the admin's own choice, so it is theirs to
+pick a legible one.
 
 A segment splits its stroke three-to-one inside one full-width empty track: completion on the inner
 three quarters, the schedule bar on the outer quarter. The fill used to take the whole stroke, which
