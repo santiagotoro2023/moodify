@@ -219,9 +219,16 @@ Moodle for a course list that has not changed.
 stored on `moodle_connection.last_sync_error`, surfaced as a banner in the admin UI, and the last
 known-good snapshot keeps rendering.
 
-**Deletions.** Courses and users that vanish from Moodle are not hard-deleted — that would cascade
-their completion snapshots away, sometimes because of a transient API hiccup. They simply stop
-having `last_seen_at` refreshed.
+**Deletions.** Users that vanish from Moodle are not hard-deleted — that would cascade their
+completion snapshots away, sometimes because of a transient API hiccup. They simply stop having
+`last_seen_at` refreshed.
+
+Courses are the exception: a full discovery deletes any course Moodle's own course list no longer
+contains. Keeping them costs more than dropping them, because the light poll works from
+`enrollments` and so keeps asking Moodle about a course that is gone, which fails every minute and
+pins the connection banner at "sync failed" — while the dead course still sits on every widget
+beside whatever replaced it. The course list is only acted on when it comes back non-empty; an
+empty answer is treated as a Moodle oddity, not as a site with no courses.
 
 The two mirror tables are the exception, because their rows are observations rather than entities.
 `activity_completion` drops an activity that is no longer complete, and `badge_issued` drops a badge

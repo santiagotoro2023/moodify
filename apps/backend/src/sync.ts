@@ -19,11 +19,15 @@
  *   - percent_complete stays NULL for courses with no completion-tracked activities;
  *     it is never coerced to 0 (§9.2).
  *
- * DELETIONS: entities that vanish from Moodle are deliberately NOT hard-deleted. The
- * FKs cascade, so removing a course mid-sync would silently wipe its completion and
- * badge rows — a transient Moodle permission glitch would destroy real data. Instead a
- * disappeared course/user simply stops having its `last_seen_at` refreshed, which is
- * enough for a future "stale entities" cleanup to be an explicit, admin-triggered action.
+ * DELETIONS: users that vanish from Moodle are deliberately NOT hard-deleted. The FKs
+ * cascade, so removing one mid-sync would silently wipe its completion and badge rows —
+ * a transient Moodle permission glitch would destroy real data. Instead a disappeared
+ * user simply stops having its `last_seen_at` refreshed, which is enough for a future
+ * "stale entities" cleanup to be an explicit, admin-triggered action.
+ *   Courses are the exception, because leaving them costs more than dropping them: the
+ *   light poll works from `enrollments`, so a deleted course keeps being asked about and
+ *   keeps failing, which pins the connection banner at "sync failed" and leaves the dead
+ *   course on every widget next to whatever replaced it. See discoverEntities.
  *   The exception is the two mirror tables — activity_completion and badge_issued — whose
  *   rows are not entities but observations of a live Moodle state. An un-completed
  *   activity or a revoked badge has to disappear, and both are re-read every poll.
@@ -699,6 +703,22 @@ async function discoverEntities(ctx: RunContext): Promise<SyncTask[]> {
     await upsertCourse(course);
     ctx.courseIds.add(course.id);
     await syncCourseActivities(ctx, course.id);
+  }
+  // A course deleted in Moodle has to go, unlike the other entities (see DELETIONS at the
+  // top of this file). Left behind it is not merely stale: every poll still asks Moodle
+  // for its enrolments and gets an exception, so the connection banner reads "sync failed"
+  // for good, and the widgets keep listing it beside its replacement. The list above is
+  // authoritative — getCourses is fatal when it fails, so reaching this line means Moodle
+  // answered — and the FKs cascade, taking the enrolments and completion with it.
+  // The length guard is the one hedge: an empty answer is far likelier to be a Moodle
+  // oddity than a site with no courses at all, and acting on it would wipe everything.
+  if (courses.length > 0) {
+    const { rowCount } = await sql(`delete from courses where moodle_course_id <> all($1::int[])`, [
+      [...ctx.courseIds],
+    ]);
+    if (rowCount !== null && rowCount > 0) {
+      ctx.logger.info({ count: rowCount }, 'removed courses that no longer exist in Moodle');
+    }
   }
   publishCounters(ctx);
 
