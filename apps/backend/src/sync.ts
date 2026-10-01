@@ -24,10 +24,12 @@
  * a transient Moodle permission glitch would destroy real data. Instead a disappeared
  * user simply stops having its `last_seen_at` refreshed, which is enough for a future
  * "stale entities" cleanup to be an explicit, admin-triggered action.
- *   Courses are the exception, because leaving them costs more than dropping them: the
- *   light poll works from `enrollments`, so a deleted course keeps being asked about and
- *   keeps failing, which pins the connection banner at "sync failed" and leaves the dead
- *   course on every widget next to whatever replaced it. See discoverEntities.
+ *   Courses and enrolments are the exception, because leaving them costs more than
+ *   dropping them: the light poll works from `enrollments`, so a deleted course keeps
+ *   being asked about and keeps failing, which pins the connection banner at "sync
+ *   failed" — and a course somebody left, like a course that no longer exists, otherwise
+ *   stays on their ring for good. Both are cleared against Moodle's own answer in
+ *   discoverEntities, never on a call that failed.
  *   The exception is the two mirror tables — activity_completion and badge_issued — whose
  *   rows are not entities but observations of a live Moodle state. An un-completed
  *   activity or a revoked badge has to disappear, and both are re-read every poll.
@@ -741,6 +743,20 @@ async function discoverEntities(ctx: RunContext): Promise<SyncTask[]> {
         ctx.userIds.add(user.id);
         pairs.push({ kind: 'pair', courseId: course.id, userId: user.id });
       }
+      // Unenrolled is the same story as a deleted course: every widget reads its people
+      // out of `enrollments`, so somebody who left a course keeps showing up in it —
+      // a second-year's ring still carrying "2. Lehrjahr" a year on. The list above is
+      // this course's whole roster (the call threw otherwise, and we would not be here),
+      // so anyone missing from it is no longer enrolled.
+      // ponytail: leaves that pair's completion_snapshot / activity_completion rows
+      // behind as orphans. They are invisible — every widget joins through enrollments —
+      // and get overwritten if the person ever re-enrols. Sweep them too if the row count
+      // ever matters.
+      await sql(
+        `delete from enrollments
+          where moodle_course_id = $1 and moodle_user_id <> all($2::int[])`,
+        [course.id, users.map((user) => user.id)],
+      );
       publishCounters(ctx);
     } catch (err) {
       // One unreadable course should not cost us the other nineteen.
