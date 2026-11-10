@@ -1256,7 +1256,13 @@ function PersonRing({
     <div
       className={cn(
         'flex flex-col items-center gap-1 rounded-xl border p-3 text-center',
-        entry.overdue > 0 ? 'border-bad/40 bg-bad/5' : 'border-edge/60 bg-white/3',
+        // Red only for someone actually behind. A missed date on its own is not that:
+        // work finished ahead of its date is the same measurement in the other
+        // direction, so having any of it means the tile keeps its neutral frame and
+        // the miss stays where it belongs — the chip and the segment that owns it.
+        entry.overdue > 0 && entry.earlyDone === 0
+          ? 'border-bad/40 bg-bad/5'
+          : 'border-edge/60 bg-white/3',
       )}
     >
       {/* No width/height: the viewBox is a coordinate space, and w-full lets the ring grow
@@ -1402,25 +1408,39 @@ function PersonRing({
       {/* Its own breathing room, top and bottom: the status is the one line that belongs
           to neither the ring nor the legend, and with only the tile's gap around it it
           reads as part of whichever it happens to sit closest to. */}
-      <div className="my-1.5 w-full text-center">
-      {entry.overdue > 0 ? (
-        <p
-          className="inline-flex max-w-full items-center gap-1 rounded-full bg-bad/12 px-2 py-0.5 text-[11px] font-medium text-bad"
-          title={overdueActivities.join(', ')}
-        >
-          <X className="h-3 w-3 shrink-0" />
-          <span className="truncate">{overdueLabel(entry.overdue)}</span>
-        </p>
-      ) : entry.earlyDone > 0 ? (
-        <p className="inline-flex max-w-full items-center gap-1 rounded-full bg-good/12 px-2 py-0.5 text-[11px] font-medium text-good">
-          <Check className="h-3 w-3 shrink-0" />
-          <span className="truncate">{earlyLabel(entry.earlyDone)}</span>
-        </p>
-      ) : (
-        // Blank rather than absent: a status line that appears on some tiles and not
-        // others shifts everything below it out of alignment across the grid.
-        <p className="text-[11px] text-muted">On track</p>
-      )}
+      <div className="my-1.5 flex w-full flex-wrap items-center justify-center gap-1">
+        {/* Both at once when both are true: somebody who worked a month ahead and then
+            missed one date is not described by either chip alone, and showing only the
+            red one calls them behind when the completion says the opposite. Side by side
+            they shorten to the counts, with the sentence kept as the tooltip, so the pair
+            still fits the one line the tiles align on. */}
+        {entry.earlyDone > 0 ? (
+          <p
+            className="inline-flex max-w-full items-center gap-1 rounded-full bg-good/12 px-2 py-0.5 text-[11px] font-medium text-good"
+            title={earlyLabel(entry.earlyDone)}
+          >
+            <Check className="h-3 w-3 shrink-0" />
+            <span className="truncate">
+              {entry.overdue > 0 ? `${entry.earlyDone} ahead` : earlyLabel(entry.earlyDone)}
+            </span>
+          </p>
+        ) : null}
+        {entry.overdue > 0 ? (
+          <p
+            className="inline-flex max-w-full items-center gap-1 rounded-full bg-bad/12 px-2 py-0.5 text-[11px] font-medium text-bad"
+            title={overdueActivities.join(', ')}
+          >
+            <X className="h-3 w-3 shrink-0" />
+            <span className="truncate">
+              {entry.earlyDone > 0 ? `${entry.overdue} overdue` : overdueLabel(entry.overdue)}
+            </span>
+          </p>
+        ) : null}
+        {entry.earlyDone === 0 && entry.overdue === 0 ? (
+          // Blank rather than absent: a status line that appears on some tiles and not
+          // others shifts everything below it out of alignment across the grid.
+          <p className="text-[11px] text-muted">On track</p>
+        ) : null}
       </div>
       {withAvatar ? (
         <SegmentRows

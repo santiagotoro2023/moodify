@@ -450,8 +450,13 @@ left unmapped fall back to their deadlines alone, and the two rules are a plain 
 puts the person further along wins. Course order is set in the widget's settings and is
 also the segment order round the ring and the colour each course gets, so one list drives all three.
 
-Under the name, one chip: red with a cross counting the overdue activities, green with a tick
-counting what was finished ahead of its date, or a plain "on track". Overdue used to be spelled out
+Under the name, up to two chips: green with a tick counting what was finished ahead of its date,
+red with a cross counting the overdue activities, or a plain "on track" when neither applies. Both
+show when both are true, shortened to their counts so the pair still fits the one line the tiles
+align on — someone who worked a month ahead and then missed one date is not described by either
+chip alone. For the same reason the tile's frame only turns red when the overdue count stands
+without any early work behind it: a miss by somebody genuinely behind colours the whole card, a
+miss by somebody ahead stays in its chip and in the segment that owns it. Overdue used to be spelled out
 by name — the more useful thing to read and the worse thing to look at, because the block grew with
 the backlog and every tile carrying one stood taller than its neighbours. The names live on in the
 chip's tooltip, where they cost no height. The old percentage "ahead of
