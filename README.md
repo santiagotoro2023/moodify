@@ -247,6 +247,13 @@ hold it twice, under two ids nothing can tell apart by name. And a badge may sti
 Moodify no longer has. Both are filtered out before the write *and* before the prune, so a badge
 already on record when the rule arrived is deleted rather than merely not re-added.
 
+A deleted course takes its badges with it (`021_badge_course_cascade`). The column was
+`on delete set null`, and NULL means site-wide everywhere else in the schema — so once discovery
+started dropping courses Moodle no longer has, every badge of a dead course was laundered into a
+site-wide one. Site-wide badges show in every course scope, so a badge that had been invisible,
+its course not being in the widget's list, reappeared beside its replacement in the new course
+under the same name.
+
 **History, and the one exception to "live snapshot only".** Everything except the *Over time*
 widget reads a snapshot that each sync overwrites. That widget needs a trail, so `metric_history`
 gets one sample of every student's badge count and completion **every 15 minutes**, independent of
