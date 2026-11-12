@@ -240,6 +240,13 @@ on the rings and the leaderboard forever: every badge query joins through `badge
 ever removed a row. The unscoped `core_badges_get_user_badges` call, which already runs once per user
 per poll, is the authoritative list — whatever it does not return is gone.
 
+It returns two things Moodify throws away first. Moodle's badge delete dialog offers "delete and
+keep existing issues", which archives the badge (status 4) rather than removing it and keeps
+reporting it to everyone who ever earned it; recreate the badge under the same name and its holders
+hold it twice, under two ids nothing can tell apart by name. And a badge may still name a course
+Moodify no longer has. Both are filtered out before the write *and* before the prune, so a badge
+already on record when the rule arrived is deleted rather than merely not re-added.
+
 **History, and the one exception to "live snapshot only".** Everything except the *Over time*
 widget reads a snapshot that each sync overwrites. That widget needs a trail, so `metric_history`
 gets one sample of every student's badge count and completion **every 15 minutes**, independent of

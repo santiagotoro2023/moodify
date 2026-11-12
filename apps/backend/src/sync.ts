@@ -53,6 +53,7 @@ import {
   getCourses,
   getEnrolledUsers,
   getUserBadges,
+  liveBadges,
   MoodleError,
   type ActivityCompletionStatus,
   type MoodleConnection,
@@ -338,6 +339,8 @@ interface RunContext {
   imagesHandled: Set<number>;
   /** Same, for profile pictures (dedupes a student enrolled in several courses). */
   avatarsHandled: Set<number>;
+  /** Every course Moodify still has, read once per run. See liveBadges. */
+  knownCourses: Set<number>;
   attempted: number;
   failures: number;
   firstError: string | null;
@@ -521,13 +524,15 @@ async function refreshPair(ctx: RunContext, courseId: number, userId: number): P
 
   // §9.2: "badges in a course" is the union of badges actually awarded to its enrolled
   // users — Moodle exposes no endpoint listing the badges *configured* for a course.
-  const badges = await getUserBadges(ctx.conn, userId, courseId);
+  const badges = liveBadges(ctx.knownCourses, await getUserBadges(ctx.conn, userId, courseId));
   await storeBadges(ctx, userId, badges);
 }
 
 /** Unscoped lookup, which is the only way site-wide (non-course) badges show up. */
 async function refreshUserBadges(ctx: RunContext, userId: number): Promise<void> {
-  const badges = await getUserBadges(ctx.conn, userId);
+  // Filtered before the prune below as well as before the write, so an archived badge
+  // already on record is deleted rather than merely not re-added.
+  const badges = liveBadges(ctx.knownCourses, await getUserBadges(ctx.conn, userId));
   await storeBadges(ctx, userId, badges);
 
   // Unscoped, so this IS every badge the user still holds. Anything else on record was
@@ -887,6 +892,7 @@ async function executeRun(logger: FastifyBaseLogger, mode: SyncMode): Promise<vo
       badgeIds: new Set<number>(),
       imagesHandled: new Set<number>(),
       avatarsHandled: new Set<number>(),
+      knownCourses: new Set<number>(),
       attempted: 0,
       failures: 0,
       firstError: null,
@@ -904,6 +910,14 @@ async function executeRun(logger: FastifyBaseLogger, mode: SyncMode): Promise<vo
 
     const started = Date.now();
     const tasks = mode === 'full' ? await discoverEntities(ctx) : await loadKnownTasks(ctx);
+    // After discovery, so a full run has already dropped whatever Moodle no longer has.
+    // Read from the table rather than from ctx.courseIds, which on a light run only holds
+    // the courses somebody is enrolled in — badges would otherwise come and go between a
+    // light run and a full one.
+    const { rows: knownCourseRows } = await sql<{ moodle_course_id: number }>(
+      'select moodle_course_id from courses',
+    );
+    for (const course of knownCourseRows) ctx.knownCourses.add(course.moodle_course_id);
     await processTasks(ctx, tasks);
     publishCounters(ctx, true);
 

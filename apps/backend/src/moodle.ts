@@ -832,6 +832,31 @@ export interface UserBadge {
   /** Unix seconds. */
   dateissued: number | null;
   badgeurl: string | null;
+  /** Moodle's badge status. 4 is archived; see liveBadges. Null on versions that omit it. */
+  status: number | null;
+}
+
+/** BADGE_STATUS_ARCHIVED — deleted in Moodle with "keep existing issues" ticked. */
+const BADGE_ARCHIVED = 4;
+
+/**
+ * The badges Moodify should record, out of what Moodle hands back for a user.
+ *
+ * Moodle's delete dialog offers "delete and keep existing issues", which does not remove
+ * the badge at all — it archives it, and keeps handing it to everyone who ever earned it.
+ * Recreate the badge under the same name afterwards and its holders have it twice, from
+ * two ids Moodify has no way to tell apart by name. Archived means deleted, so it goes.
+ *
+ * The same for a badge belonging to a course Moodify no longer has: the course is gone
+ * from Moodle, so its badge is history nobody asked to keep on screen. `known` is the
+ * course set, and a site-wide badge (no course) always passes.
+ */
+export function liveBadges(known: ReadonlySet<number>, badges: readonly UserBadge[]): UserBadge[] {
+  return badges.filter(
+    (badge) =>
+      badge.status !== BADGE_ARCHIVED &&
+      (badge.courseid === null || known.has(badge.courseid)),
+  );
 }
 
 /**
@@ -862,6 +887,7 @@ export async function getUserBadges(
       courseid: rawCourseId !== null && rawCourseId > 0 ? rawCourseId : null,
       dateissued: issued !== null && issued > 0 ? issued : null,
       badgeurl: imageUrl !== null && imageUrl.trim() !== '' ? imageUrl : null,
+      status: readNumber(entry, 'status'),
     });
   }
   return badges;
